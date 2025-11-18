@@ -46,6 +46,7 @@ type ManagedProcess struct {
 	PID         int          `json:"pid"`
 	StartTime   time.Time    `json:"startTime"`
 	Speed       string       `json:"speed,omitempty"`
+	isRemoved   bool
 	ctx         context.Context
 	cancel      context.CancelFunc
 	cmd         *exec.Cmd
@@ -67,6 +68,7 @@ func NewManagedProcess(id string, wrapperPath string, command string, args []str
 		logBuffer:   make([]string, 0, 100),
 		StartTime:   time.Time{},
 		Speed:       "N/A",
+		isRemoved:   false,
 	}
 }
 func (p *ManagedProcess) Start() {
@@ -105,6 +107,11 @@ func (p *ManagedProcess) Write(data string) error {
 
 func (p *ManagedProcess) setState(newState ProcessState) {
 	p.mutex.Lock()
+
+	if p.isRemoved {
+		p.mutex.Unlock()
+		return
+	}
 
 	if p.State == newState {
 		p.mutex.Unlock()
@@ -232,6 +239,8 @@ func (p *ManagedProcess) runLoop() {
 
 		if exists {
 			p.logToBuffer("--- 正在重启... ---")
+			p.cancel()
+			p.ctx, p.cancel = context.WithCancel(context.Background())
 			p.Start()
 		} else {
 			p.logToBuffer("--- 进程已被移除，取消重启 ---")
@@ -249,7 +258,7 @@ func (p *ManagedProcess) getCheckPort() string {
 
 func (p *ManagedProcess) healthCheck(port string) {
 	checkAddr := "127.0.0.1:" + port
-	
+
 	initialCheckOK := false
 	for i := 0; i < 10; i++ {
 		select {
@@ -296,7 +305,7 @@ func (p *ManagedProcess) healthCheck(port string) {
 				p.mutex.Lock()
 				state := p.State
 				p.mutex.Unlock()
-				
+
 				if state == StateRunning {
 					p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 无法连接到 %s", checkAddr))
 					p.setState(StateFailed)
@@ -324,7 +333,7 @@ func (p *ManagedProcess) healthCheck(port string) {
 type Manager struct {
 	WrapperPath string
 	Processes   map[string]*ManagedProcess
-	mutex       sync.RWMutex 
+	mutex       sync.RWMutex
 	ConfigPath  string
 }
 
@@ -348,15 +357,15 @@ func (m *Manager) AddProcess(id string, command string, args []string) (*Managed
 
 	p := NewManagedProcess(id, m.WrapperPath, command, args)
 	m.Processes[id] = p
-	m.saveConfig_internal() 
-	
-	m.mutex.Unlock() 
+	m.saveConfig_internal()
+
+	m.mutex.Unlock()
 
 	if exists {
-		p_exists.Stop() 
+		p_exists.Stop()
 	}
-	p.Start() 
-	
+	p.Start()
+
 	return p, nil
 }
 
@@ -368,10 +377,14 @@ func (m *Manager) RemoveProcess(id string) error {
 		return fmt.Errorf("未找到 ID 为 %s 的进程", id)
 	}
 
+	p.mutex.Lock()
+	p.isRemoved = true
+	p.mutex.Unlock()
+
 	delete(m.Processes, id)
 	m.saveConfig_internal()
-	
-	m.mutex.Unlock() 
+
+	m.mutex.Unlock()
 
 	p.Stop()
 	globalHub.BroadcastProcessRemoved(id)
@@ -443,7 +456,7 @@ func (m *Manager) LoadConfig() {
 		m.Processes[cfg.ID] = p
 	}
 	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
-	
+
 	for _, p := range m.Processes {
 		p.Start()
 	}
@@ -591,7 +604,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("收到 'start' 命令, ID: %s", port)
 			globalManager.AddProcess(port, msg.Command, msg.Args)
-		
+
 		case "remove_process":
 			log.Printf("收到 'remove' 命令, ID: %s", msg.ID)
 			globalManager.RemoveProcess(msg.ID)
@@ -601,9 +614,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if p != nil {
 				p.Write(msg.Data)
 			}
-		
+
 		case "get_logs":
-			p := globalManager.GetProcess(msg.ID) 
+			p := globalManager.GetProcess(msg.ID)
 			if p != nil {
 				conn.WriteJSON(WSMessage{Type: "full_log", ID: p.ID, Payload: p.logBuffer})
 			}
@@ -635,16 +648,16 @@ func main() {
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
 		log.Println("收到关闭信号，正在停止所有子进程...")
-		
+
 		allProcs := globalManager.GetAllProcesses()
 		for _, p := range allProcs {
 			log.Printf("正在停止 [%s]...", p.ID)
-			p.Stop() 
+			p.Stop()
 		}
 
 		log.Println("等待 2 秒以完成清理...")
-		time.Sleep(2 * time.Second) 
-		
+		time.Sleep(2 * time.Second)
+
 		log.Println("所有进程已停止。退出。")
 		os.Exit(0)
 	}()
