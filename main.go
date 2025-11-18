@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -53,6 +55,13 @@ type ManagedProcess struct {
 	ptmx        io.ReadWriteCloser
 	mutex       sync.Mutex
 	logBuffer   []string
+}
+
+type SystemStats struct {
+	CPUUsage    float64 `json:"cpu"`
+	MemUsage    float64 `json:"mem"`
+	NetDownRate float64 `json:"net_down"`
+	NetUpRate   float64 `json:"net_up"`
 }
 
 func NewManagedProcess(id string, wrapperPath string, command string, args []string) *ManagedProcess {
@@ -542,6 +551,15 @@ func (h *Hub) BroadcastProcessRemoved(id string) {
 	h.broadcast <- data
 }
 
+func (h *Hub) BroadcastSystemStats(stats SystemStats) {
+	msg := WSMessage{
+		Type:    "system_stats",
+		Payload: stats,
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -624,6 +642,119 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func readCPUSample() (idle, total uint64) {
+	f, err := os.Open("/proc/stat")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) > 4 && fields[0] == "cpu" {
+			for i := 1; i < len(fields); i++ {
+				val, _ := strconv.ParseUint(fields[i], 10, 64)
+				total += val
+				if i == 4 {
+					idle += val
+				}
+			}
+		}
+	}
+	return
+}
+
+func readMemUsage() float64 {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var total, avail float64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		if parts[0] == "MemTotal:" {
+			total, _ = strconv.ParseFloat(parts[1], 64)
+		} else if parts[0] == "MemAvailable:" {
+			avail, _ = strconv.ParseFloat(parts[1], 64)
+		}
+	}
+	if total > 0 {
+		return ((total - avail) / total) * 100
+	}
+	return 0
+}
+
+func readNetStats() (rx, tx uint64) {
+	f, err := os.Open("/proc/net/dev")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, ":") {
+			parts := strings.Fields(line)
+			if len(parts) < 10 {
+				continue
+			}
+			if strings.HasPrefix(parts[0], "lo") {
+				continue
+			}
+			
+			cleanParts := strings.Fields(strings.ReplaceAll(line, ":", " "))
+			if len(cleanParts) < 10 {
+				continue
+			}
+			
+			r, _ := strconv.ParseUint(cleanParts[1], 10, 64)
+			t, _ := strconv.ParseUint(cleanParts[9], 10, 64)
+			rx += r
+			tx += t
+		}
+	}
+	return
+}
+
+func monitorSystem() {
+	prevIdle, prevTotal := readCPUSample()
+	prevRx, prevTx := readNetStats()
+	
+	for {
+		time.Sleep(1 * time.Second)
+		currIdle, currTotal := readCPUSample()
+		idleDiff := float64(currIdle - prevIdle)
+		totalDiff := float64(currTotal - prevTotal)
+		cpuUsage := 0.0
+		if totalDiff > 0 {
+			cpuUsage = (1.0 - (idleDiff / totalDiff)) * 100.0
+		}
+		prevIdle, prevTotal = currIdle, currTotal
+
+		memUsage := readMemUsage()
+
+		currRx, currTx := readNetStats()
+		downRate := float64(currRx - prevRx)
+		upRate := float64(currTx - prevTx)
+		prevRx, prevTx = currRx, currTx
+
+		stats := SystemStats{
+			CPUUsage:    cpuUsage,
+			MemUsage:    memUsage,
+			NetDownRate: downRate,
+			NetUpRate:   upRate,
+		}
+		globalHub.BroadcastSystemStats(stats)
+	}
+}
+
 func main() {
 	wrapperBin := flag.String("wrapper-bin", "./wrapper", "zhaarey/wrapper 可执行文件的路径")
 	port := flag.String("port", "8080", "此管理器 Web UI 的监听端口")
@@ -637,6 +768,7 @@ func main() {
 	globalHub = newHub()
 	globalManager = NewManager(*wrapperBin, *configJson)
 	go globalHub.run()
+	go monitorSystem()
 
 	http.HandleFunc("/ws", handleWebSocket)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
