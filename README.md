@@ -11,52 +11,49 @@
 * **自动重启**：进程意外退出或崩溃时自动尝试重启。
 * **配置持久化**：自动保存进程列表，重启管理器后自动恢复之前的任务。
 * **wrapper项目**：https://github.com/zhaarey/wrapper
-* **多线程多区域项目分支**：https://github.com/sky8282/apple-music-downloader
+* **apple-music-downloader 多线程多区域项目分支**：https://github.com/sky8282/apple-music-downloader
 
 ## 🛠️ 环境要求
 * Linux (推荐 Debian/Ubuntu)
 * Go 1.18+ (仅编译需要)
 * 目标 `wrapper` 可执行文件
 
-## 🚀 部署指南
-### 1. 准备目录结构
-服务器上目录结构如下：
+## 🚀 部署与使用指南
+### 服务器上目录结构如下：
 ```text
 /root/wrapper/
 ├── main.go           # 源码 (或者编译好的 wrapper-manager)
 ├── index.html        # 前端界面
-├── wrapper           # 你的业务二进制程序 (必须存在)
-└── rootfs            # wrapper相关的文件夹
+├── wrapper           # wrapper 二进制程序 (必须存在)
+└── rootfs            # wrapper 相关的文件夹
 ```
-# 初始化 Go 模块
+### 初始化 Go 模块：
 ```text
 go mod init wrapper-manager
 ```
-# 下载依赖 (WebSocket 和 PTY 库)
+### 下载依赖 (WebSocket 和 PTY 库)：
 ```text
 go mod tidy
 ```
-# 编译程序
+### 编译程序：
 ```text
 go build -o wrapper-manager .
 ```
-# 赋予执行权限
+### 赋予执行权限：
 ```text
 chmod +x wrapper-manager
 ```
 
-启动参数说明:
+### 启动参数说明:
 * --wrapper-bin: 指定被管理的二进制文件路径（默认为 ./wrapper）。
 * --port: Web 界面监听端口（默认为 8080）。
 * --config: 配置文件路径（默认为 manager.json，会自动创建）。
 
-使用以下命令启动管理器：
+### 使用以下命令启动管理器：
 ```text
 ./wrapper-manager --wrapper-bin="./wrapper" --port=8080
 ```
-在web界面添加新进程：
+### 在web界面添加新进程：
 * 点击仪表盘上的 "+ 添加新进程" 卡片。
-* 输入完整的启动命令，如：-H 0.0.0.0 -D 10020 -M 10021 或者 -H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码。
+* 输入完整的启动命令，如：-H 0.0.0.0 -D 10020 -M 10021 或 -H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码，或 其他启动参数
 * 注意：命令中必须包含 -D <端口> 参数，管理器将使用该端口作为进程的唯一 ID 进行识别和健康检查。
-
-
