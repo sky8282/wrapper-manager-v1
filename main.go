@@ -40,21 +40,23 @@ const (
 )
 
 type ManagedProcess struct {
-	ID          string       `json:"id"`
-	Command     string       `json:"command"`
-	Args        []string     `json:"args"`
-	WrapperPath string       `json:"-"`
-	State       ProcessState `json:"state"`
-	PID         int          `json:"pid"`
-	StartTime   time.Time    `json:"startTime"`
-	Speed       string       `json:"speed,omitempty"`
-	isRemoved   bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	cmd         *exec.Cmd
-	ptmx        io.ReadWriteCloser
-	mutex       sync.Mutex
-	logBuffer   []string
+	ID             string       `json:"id"`
+	Command        string       `json:"command"`
+	Args           []string     `json:"args"`
+	WrapperPath    string       `json:"-"`
+	State          ProcessState `json:"state"`
+	PID            int          `json:"pid"`
+	StartTime      time.Time    `json:"startTime"`
+	Speed          string       `json:"speed,omitempty"`
+	NetSpeed       string       `json:"netSpeed"`
+	prevBytes      uint64
+	isRemoved      bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	cmd            *exec.Cmd
+	ptmx           io.ReadWriteCloser
+	mutex          sync.Mutex
+	logBuffer      []string
 }
 
 type SystemStats struct {
@@ -67,17 +69,19 @@ type SystemStats struct {
 func NewManagedProcess(id string, wrapperPath string, command string, args []string) *ManagedProcess {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ManagedProcess{
-		ID:          id,
-		Command:     command,
-		Args:        args,
-		WrapperPath: wrapperPath,
-		State:       StateStopped,
-		ctx:         ctx,
-		cancel:      cancel,
-		logBuffer:   make([]string, 0, 100),
-		StartTime:   time.Time{},
-		Speed:       "N/A",
-		isRemoved:   false,
+		ID:             id,
+		Command:        command,
+		Args:           args,
+		WrapperPath:    wrapperPath,
+		State:          StateStopped,
+		ctx:            ctx,
+		cancel:         cancel,
+		logBuffer:      make([]string, 0, 100),
+		StartTime:      time.Time{},
+		Speed:          "N/A",
+		NetSpeed:       "N/A",
+		prevBytes:      0,
+		isRemoved:      false,
 	}
 }
 func (p *ManagedProcess) Start() {
@@ -138,6 +142,8 @@ func (p *ManagedProcess) setState(newState ProcessState) {
 		p.PID = 0
 		p.StartTime = time.Time{}
 		p.Speed = "N/A"
+		p.NetSpeed = "N/A"
+		p.prevBytes = 0
 	}
 
 	payload := *p
@@ -755,6 +761,107 @@ func monitorSystem() {
 	}
 }
 
+func formatProcessSpeed(bytes uint64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B/s", bytes)
+	}
+	k := float64(bytes) / 1024
+	if k < 1024 {
+		return fmt.Sprintf("%.1f KB/s", k)
+	}
+	m := k / 1024
+	return fmt.Sprintf("%.1f MB/s", m)
+}
+
+func getPortTrafficMap() map[string]uint64 {
+	out, err := exec.Command("ss", "-nitH").Output()
+	if err != nil {
+		return nil
+	}
+
+	stats := make(map[string]uint64)
+	lines := strings.Split(string(out), "\n")
+	var currentPort string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			fields := strings.Fields(line)
+			if len(fields) >= 4 {
+				_, port, err := net.SplitHostPort(fields[3])
+				if err == nil {
+					currentPort = port
+				}
+			}
+		}
+
+		if strings.Contains(line, "bytes_acked:") {
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "bytes_acked:") {
+					valStr := strings.TrimPrefix(part, "bytes_acked:")
+					val, _ := strconv.ParseUint(valStr, 10, 64)
+					if currentPort != "" {
+						stats[currentPort] += val
+					}
+				}
+			}
+		}
+	}
+	return stats
+}
+
+func monitorNetworkSpeed() {
+	for {
+		time.Sleep(1 * time.Second)
+		portStats := getPortTrafficMap()
+		globalManager.mutex.RLock()
+		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
+		for _, p := range globalManager.Processes {
+			procs = append(procs, p)
+		}
+		globalManager.mutex.RUnlock()
+
+		for _, p := range procs {
+			p.mutex.Lock()
+			if p.State == StateRunning {
+				currBytes := portStats[p.ID]
+				
+				if currBytes > 0 {
+					if p.prevBytes == 0 {
+						p.prevBytes = currBytes
+						p.NetSpeed = "0 B/s"
+					} else {
+						diff := uint64(0)
+						if currBytes >= p.prevBytes {
+							diff = currBytes - p.prevBytes
+						} else {
+							diff = currBytes
+						}
+						p.NetSpeed = formatProcessSpeed(diff)
+						p.prevBytes = currBytes
+					}
+				} else {
+					p.NetSpeed = "0 B/s"
+					p.prevBytes = 0 
+				}
+				
+				payload := *p
+				p.mutex.Unlock()
+				globalHub.BroadcastStateUpdate(&payload)
+			} else {
+				p.prevBytes = 0
+				p.NetSpeed = "N/A"
+				p.mutex.Unlock()
+			}
+		}
+	}
+}
+
 func main() {
 	wrapperBin := flag.String("wrapper-bin", "./wrapper", "zhaarey/wrapper 可执行文件的路径")
 	port := flag.String("port", "8080", "此管理器 Web UI 的监听端口")
@@ -769,6 +876,7 @@ func main() {
 	globalManager = NewManager(*wrapperBin, *configJson)
 	go globalHub.run()
 	go monitorSystem()
+	go monitorNetworkSpeed()
 
 	http.HandleFunc("/ws", handleWebSocket)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
