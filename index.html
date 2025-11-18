@@ -5,7 +5,11 @@
     <title>Wrapper 仪表盘</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
-        h1 { color: #333; }
+        h1 { color: #333; display: flex; align-items: center; flex-wrap: wrap; }
+        .sys-stats { font-size: 14px; color: #666; font-weight: normal; margin-left: 20px; display: inline-flex; gap: 15px; background: #e6f7ff; padding: 5px 15px; border-radius: 20px; border: 1px solid #91d5ff; }
+        .sys-stat-item { display: flex; align-items: center; }
+        .sys-stat-item strong { color: #1890ff; margin-right: 4px; }
+        
         .container { max-width: 1400px; margin: 0 auto; }
         .process-list { 
             display: grid; 
@@ -96,7 +100,15 @@
 <body>
 
     <div class="container">
-        <h1>Wrapper 仪表盘</h1>
+        <h1>
+            Wrapper 仪表盘
+            <span class="sys-stats" id="sysStats">
+                <span class="sys-stat-item">CPU:<strong id="statCpu">0%</strong></span>
+                <span class="sys-stat-item">内存:<strong id="statMem">0%</strong></span>
+                <span class="sys-stat-item">上传↑<strong id="statUp">0 KB/s</strong></span>
+                <span class="sys-stat-item">下载↓<strong id="statDown">0 KB/s</strong></span>
+            </span>
+        </h1>
         <div class="process-list" id="processList">
             <div class="process-card add-card" id="addProcessCard">
                 <span style="font-size: 24px; color: #bfbfbf;">+ 添加新进程</span>
@@ -134,6 +146,19 @@
         ws.onclose = () => console.log("WebSocket 已断开");
         ws.onerror = (err) => console.error("WebSocket 错误:", err);
 
+        const statCpu = document.getElementById('statCpu');
+        const statMem = document.getElementById('statMem');
+        const statDown = document.getElementById('statDown');
+        const statUp = document.getElementById('statUp');
+
+        function formatSpeed(bytes) {
+            if (bytes < 1024) return bytes.toFixed(0) + ' B/s';
+            const k = bytes / 1024;
+            if (k < 1024) return k.toFixed(1) + ' KB/s';
+            const m = k / 1024;
+            return m.toFixed(1) + ' MB/s';
+        }
+
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             switch (msg.type) {
@@ -154,6 +179,12 @@
                     if (card) {
                         card.remove();
                     }
+                    break;
+                case "system_stats":
+                    statCpu.textContent = msg.payload.cpu.toFixed(1) + '%';
+                    statMem.textContent = msg.payload.mem.toFixed(1) + '%';
+                    statDown.textContent = formatSpeed(msg.payload.net_down);
+                    statUp.textContent = formatSpeed(msg.payload.net_up);
                     break;
             }
         };
