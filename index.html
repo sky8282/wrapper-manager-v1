@@ -105,8 +105,8 @@
             <span class="sys-stats" id="sysStats">
                 <span class="sys-stat-item">CPU:<strong id="statCpu">0%</strong></span>
                 <span class="sys-stat-item">内存:<strong id="statMem">0%</strong></span>
-                <span class="sys-stat-item">上传↑<strong id="statUp">0 KB/s</strong></span>
-                <span class="sys-stat-item">下载↓<strong id="statDown">0 KB/s</strong></span>
+                <span class="sys-stat-item">上传↑:<strong id="statUp">0 KB/s</strong></span>
+                <span class="sys-stat-item">下载↓:<strong id="statDown">0 KB/s</strong></span>
             </span>
         </h1>
         <div class="process-list" id="processList">
@@ -234,7 +234,7 @@
                     runtimeEl.textContent = 'N/A';
                 }
                 
-                existingCard.querySelector('.proc-speed').textContent = proc.speed || 'N/A';
+                existingCard.querySelector('.proc-speed').textContent = proc.netSpeed || 'N/A';
                 const startBtn = existingCard.querySelector('.btn-start');
                 const restartBtn = existingCard.querySelector('.btn-restart');              
                 if (proc.state === "STOPPED" || proc.state === "FAILED") {
@@ -322,7 +322,7 @@
                 </div>
                 
                 <div class="card-row">
-                    <span><span class="label">解密速度待更新:</span><span class="proc-speed">${proc.speed || 'N/A'}</span></span>
+                    <span><span class="label">解密速度:</span><span class="proc-speed">${proc.netSpeed || 'N/A'}</span></span>
                 </div>
 
                 <textarea class="process-command-edit" rows="3">${proc.command}</textarea>
