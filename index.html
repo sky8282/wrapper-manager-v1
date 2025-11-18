@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Wrapper 仪表盘</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        h1 { color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .process-list { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
+            gap: 20px; 
+        }
+        
+        .process-card { 
+            background: #fff; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            padding: 15px; 
+            display: flex; 
+            flex-direction: column; 
+        }
+
+        .card-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #333;
+            flex-wrap: wrap;
+        }
+
+        .card-row.header {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 12px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 8px;
+        }
+
+        .card-row span {
+            margin-right: 15px;
+            white-space: nowrap;
+        }
+
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .status-dot.STARTING { background-color: #fadb14; }
+        .status-dot.RUNNING { background-color: #52c41a; }
+        .status-dot.STOPPED { background-color: #bfbfbf; }
+        .status-dot.FAILED { background-color: #f5222d; }
+
+        .label {
+            color: #666;
+            font-weight: 500;
+            margin-right: 2px !important;
+        }
+
+        .process-command-edit { 
+            width: 100%; 
+            padding: 8px; 
+            margin: 5px 0 0 0;
+            box-sizing: border-box; 
+            font-family: monospace; 
+            border: 1px solid #d9d9d9; 
+            border-radius: 4px; 
+            resize: vertical; 
+            min-height: 50px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        .process-buttons { 
+            display: flex; 
+            justify-content: center;
+            gap: 8px; 
+            margin-top: 15px;
+        }
+        .process-buttons button { padding: 5px 15px; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; font-size: 13px; }
+        .btn-log { background-color: #1890ff; color: white; }
+        .btn-restart { background-color: #faad14; color: white; }
+        .btn-start { background-color: #52c41a; color: white; }
+        .btn-remove { background-color: #aaa; color: white; }
+        
+        .add-card { background: #fafafa; border: 2px dashed #d9d9d9; display: flex; align-items: center; justify-content: center; min-height: 200px; cursor: pointer; }
+        .add-card:hover { border-color: #1890ff; }
+        
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 5% auto; padding: 20px; border-radius: 8px; width: 90%; max-width: 800px; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; }
+        .close { color: #aaa; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .modal-content textarea, .modal-content input { width: 100%; padding: 8px; margin-top: 10px; box-sizing: border-box; font-family: monospace; }
+        #terminal-log { background: #222; color: #0f0; height: 400px; overflow-y: auto; padding: 10px; box-sizing: border-box; font-family: monospace; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Wrapper 仪表盘</h1>
+        <div class="process-list" id="processList">
+            <div class="process-card add-card" id="addProcessCard">
+                <span style="font-size: 24px; color: #bfbfbf;">+ 添加新进程</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="addModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>添加新 Wrapper 进程</h2>
+                <span class="close" data-modal="addModal">&times;</span>
+            </div>
+            <p>请输入完整的启动命令 (将自动解析 -D 端口作为 ID):</p>
+            <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码">
+            <button id="addCommandButton">添加并启动</button>
+        </div>
+    </div>
+
+    <div id="logModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="logModalTitle">进程日志</h2>
+                <span class="close" data-modal="logModal">&times;</span>
+            </div>
+            <div id="terminal-log"></div>
+            <input type="text" id="terminalInput" placeholder="在此输入 2FA 验证码并按回车...">
+        </div>
+    </div>
+
+    <script>
+        const ws = new WebSocket("ws://" + window.location.host + "/ws");
+        
+        ws.onopen = () => console.log("WebSocket 已连接");
+        ws.onclose = () => console.log("WebSocket 已断开");
+        ws.onerror = (err) => console.error("WebSocket 错误:", err);
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            switch (msg.type) {
+                case "full_status":
+                    renderProcessList(msg.payload);
+                    break;
+                case "state_update":
+                    updateProcessCard(msg.payload);
+                    break;
+                case "log_line":
+                    appendLog(msg.id, msg.data);
+                    break;
+                case "full_log":
+                    renderFullLog(msg.id, msg.payload);
+                    break;
+                case "process_removed":
+                    const card = document.getElementById("card-" + msg.id);
+                    if (card) {
+                        card.remove();
+                    }
+                    break;
+            }
+        };
+        const processListEl = document.getElementById('processList');
+        const addModal = document.getElementById('addModal');
+        const logModal = document.getElementById('logModal');
+        const addProcessCard = document.getElementById('addProcessCard');
+        const addCommandInput = document.getElementById('addCommandInput');
+        const addCommandButton = document.getElementById('addCommandButton');
+        const logModalTitle = document.getElementById('logModalTitle');
+        const terminalLog = document.getElementById('terminal-log');
+        const terminalInput = document.getElementById('terminalInput');
+
+        let currentLogID = null; 
+        
+        function renderProcessList(processes) {
+            while (processListEl.firstChild && processListEl.firstChild !== addProcessCard) {
+                processListEl.removeChild(processListEl.firstChild);
+            }
+            if (processes) {
+                processes.sort((a, b) => {
+                    const idA = parseInt(a.id, 10);
+                    const idB = parseInt(b.id, 10);
+                    return idA - idB;
+                });
+
+                processes.forEach(proc => {
+                    const card = createProcessCard(proc);
+                    processListEl.insertBefore(card, addProcessCard);
+                });
+            }
+        }
+
+        function updateProcessCard(proc) {
+            const existingCard = document.getElementById("card-" + proc.id);
+            if (existingCard) {
+                const dot = existingCard.querySelector('.status-dot');
+                const statusText = existingCard.querySelector('.status-text');
+                dot.className = "status-dot " + proc.state;
+                statusText.textContent = proc.state;
+                existingCard.querySelector('.proc-pid').textContent = proc.pid || 'N/A';
+                const runtimeEl = existingCard.querySelector('.proc-runtime');
+                const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
+                const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
+                runtimeEl.dataset.starttime = startTimeMillis;
+                if (startTimeMillis === 0) {
+                    runtimeEl.textContent = 'N/A';
+                }
+                
+                existingCard.querySelector('.proc-speed').textContent = proc.speed || 'N/A';
+                const startBtn = existingCard.querySelector('.btn-start');
+                const restartBtn = existingCard.querySelector('.btn-restart');              
+                if (proc.state === "STOPPED" || proc.state === "FAILED") {
+                    startBtn.style.display = 'inline-block';
+                    restartBtn.style.display = 'none';
+                } else {
+                    startBtn.style.display = 'none';
+                    restartBtn.style.display = 'inline-block';
+                }
+
+            } else {
+                const card = createProcessCard(proc);
+                const newId = parseInt(proc.id, 10);
+                let inserted = false;
+                const cards = processListEl.querySelectorAll('.process-card:not(.add-card)');
+                for (const existing of cards) {
+                    const existingId = parseInt(existing.id.replace('card-', ''), 10);
+                    if (!isNaN(existingId) && newId < existingId) {
+                        processListEl.insertBefore(card, existing);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    processListEl.insertBefore(card, addProcessCard);
+                }
+            }
+        }
+
+        function parsePortsObj(command) {
+            const dPort = command.match(/-D\s+([^\s]+)/)?.[1] || "N/A";
+            const mPort = command.match(/-M\s+([^\s]+)/)?.[1] || "N/A";
+            return { d: dPort, m: mPort };
+        }
+
+        function parseDPort(args) {
+             for (let i = 0; i < args.length; i++) {
+                if (args[i] === '-D' && i + 1 < args.length) {
+                    const parts = args[i+1].split(':');
+                    return parts[parts.length - 1];
+                }
+            }
+            for (const arg of args) {
+                if (arg.startsWith("-D") && arg.length > 2) {
+                     const parts = arg.substring(2).split(':');
+                     return parts[parts.length - 1];
+                }
+            }
+            return "";
+        }
+
+        function createProcessCard(proc) {
+            const card = document.createElement('div');
+            card.className = 'process-card';
+            card.id = 'card-' + proc.id;
+            
+            const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
+            const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
+            const isStopped = proc.state === 'STOPPED' || proc.state === 'FAILED';
+            const ports = parsePortsObj(proc.command);
+
+            card.innerHTML = `
+                <div class="card-row header">
+                    <span style="display:flex; align-items:center;">
+                        <span class="status-dot ${proc.state}"></span>
+                        <span class="status-text">${proc.state}</span>
+                    </span>
+                    <span><span class="label">进程ID:</span><span class="proc-pid">${proc.pid || 'N/A'}</span></span>
+                </div>
+                
+                <div class="card-row">
+                    <span><span class="label">解密端口:</span>${ports.d}</span>
+                </div>
+                
+                <div class="card-row">
+                    <span><span class="label">M3U8端口:</span>${ports.m}</span>
+                </div>
+
+                <div class="card-row">
+                    <span><span class="label">系统</span>Linux (Debian)</span>
+                </div>
+
+                <div class="card-row">
+                    <span><span class="label">运行时间:</span><span class="proc-runtime" data-starttime="${startTimeMillis}">N/A</span></span>
+                </div>
+                
+                <div class="card-row">
+                    <span><span class="label">解密速度待更新:</span><span class="proc-speed">${proc.speed || 'N/A'}</span></span>
+                </div>
+
+                <textarea class="process-command-edit" rows="3">${proc.command}</textarea>
+
+                <div class="process-buttons">
+                    <button class="btn-log" data-id="${proc.id}">日志</button>
+                    <button class="btn-start" data-id="${proc.id}" style="display: ${isStopped ? 'inline-block' : 'none'};">启动</button>
+                    <button class="btn-restart" data-id="${proc.id}" style="display: ${isStopped ? 'none' : 'inline-block'};">重启</button>
+                    <button class="btn-remove" data-id="${proc.id}">停止</button>
+                </div>
+            `;
+            return card;
+        }
+
+        function appendLog(id, line) {
+            if (id === currentLogID) {
+                terminalLog.innerHTML += "<div></div>"; 
+                terminalLog.lastChild.textContent = line; 
+                terminalLog.scrollTop = terminalLog.scrollHeight;
+            }
+        }
+
+        function renderFullLog(id, lines) {
+            terminalLog.innerHTML = ""; 
+            if (lines) {
+                lines.forEach(line => appendLog(id, line));
+            }
+        }
+
+        function formatDuration(ms) {
+            if (ms <= 0) return 'N/A';
+            const totalSeconds = Math.floor(ms / 1000);
+            const d = Math.floor(totalSeconds / 86400);
+            const h = String(Math.floor((totalSeconds % 86400) / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSeconds % 60).padStart(2, '0');
+            
+            if (d > 0) {
+                return `${d}天 ${h}:${m}:${s}`;
+            }
+            return `${h}:${m}:${s}`;
+        }
+
+        setInterval(() => {
+            document.querySelectorAll('.proc-runtime').forEach(el => {
+                const startTime = parseInt(el.dataset.starttime, 10);
+                if (startTime > 0) {
+                    el.textContent = formatDuration(Date.now() - startTime);
+                }
+            });
+        }, 1000);
+
+        function splitCommand(commandText) {
+             return commandText.match(/(".*?"|[^"\s]+)+(?=\s*|\s*$)/g) || [];
+        }
+
+        processListEl.addEventListener('click', (e) => {
+            const target = e.target;
+            const id = target.dataset.id;
+            if (!id) return;
+
+            if (target.classList.contains('btn-log')) {
+                currentLogID = id;
+                logModalTitle.textContent = "进程日志 (ID: " + id + ")";
+                terminalInput.dataset.id = id;
+                logModal.style.display = 'block';
+                ws.send(JSON.stringify({ type: "get_logs", id: id }));
+            }
+            
+            if (target.classList.contains('btn-start') || target.classList.contains('btn-restart')) {
+                const card = document.getElementById('card-' + id);
+                const commandText = card.querySelector('.process-command-edit').value;
+                const args = splitCommand(commandText);
+                const newId = parseDPort(args);
+                
+                if (!newId) {
+                    alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+                    return;
+                }
+                
+                if (newId !== id) {
+                    if (confirm(`端口 ID 已从 ${id} 更改为 ${newId}。是否继续? 这将移除旧进程并启动新进程。`)) {
+                        ws.send(JSON.stringify({ type: "remove_process", id: id }));
+                        ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
+                    }
+                } else {
+                    ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
+                }
+            }
+                        
+            if (target.classList.contains('btn-remove')) {
+                if (confirm("确定要移除进程 " + id + " 吗?")) {
+                    ws.send(JSON.stringify({ type: "remove_process", id: id }));
+                }
+            }
+        });
+
+        addProcessCard.onclick = () => addModal.style.display = 'block';
+        addCommandButton.onclick = () => {
+            const commandText = addCommandInput.value;
+            const args = splitCommand(commandText);
+            const id = parseDPort(args);
+
+            if (!id) {
+                alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+                return;
+            }
+
+            ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
+            addModal.style.display = 'none';
+        };
+
+        terminalInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const id = e.target.dataset.id;
+                const data = e.target.value;
+                if (id && data) {
+                    ws.send(JSON.stringify({ type: "stdin", id: id, data: data }));
+                    e.target.value = "";
+                }
+            }
+        });
+        document.querySelectorAll('.close').forEach(el => {
+            el.onclick = () => {
+                document.getElementById(el.dataset.modal).style.display = 'none';
+                if (el.dataset.modal === 'logModal') {
+                    currentLogID = null; 
+                    terminalLog.innerHTML = ""; 
+                }
+            };
+        });
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,658 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/creack/pty"
+	"github.com/gorilla/websocket"
+)
+
+type WrapperStatus struct {
+	Status     string `json:"status"`
+	Speed      string `json:"speed"`
+	Percentage int    `json:"percentage"`
+}
+
+type ProcessState string
+
+const (
+	StateStarting ProcessState = "STARTING"
+	StateRunning  ProcessState = "RUNNING"
+	StateStopped  ProcessState = "STOPPED"
+	StateFailed   ProcessState = "FAILED"
+)
+
+type ManagedProcess struct {
+	ID          string       `json:"id"`
+	Command     string       `json:"command"`
+	Args        []string     `json:"args"`
+	WrapperPath string       `json:"-"`
+	State       ProcessState `json:"state"`
+	PID         int          `json:"pid"`
+	StartTime   time.Time    `json:"startTime"`
+	Speed       string       `json:"speed,omitempty"`
+	ctx         context.Context
+	cancel      context.CancelFunc
+	cmd         *exec.Cmd
+	ptmx        io.ReadWriteCloser
+	mutex       sync.Mutex
+	logBuffer   []string
+}
+
+func NewManagedProcess(id string, wrapperPath string, command string, args []string) *ManagedProcess {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &ManagedProcess{
+		ID:          id,
+		Command:     command,
+		Args:        args,
+		WrapperPath: wrapperPath,
+		State:       StateStopped,
+		ctx:         ctx,
+		cancel:      cancel,
+		logBuffer:   make([]string, 0, 100),
+		StartTime:   time.Time{},
+		Speed:       "N/A",
+	}
+}
+func (p *ManagedProcess) Start() {
+	go p.runLoop()
+}
+
+func (p *ManagedProcess) Stop() {
+	p.logToBuffer("--- 收到停止命令 ---")
+	p.cancel()
+	p.mutex.Lock()
+	pidToKill := 0
+	if p.cmd != nil && p.cmd.Process != nil {
+		pidToKill = p.cmd.Process.Pid
+	}
+	p.mutex.Unlock()
+
+	if pidToKill != 0 {
+		if err := syscall.Kill(-pidToKill, syscall.SIGKILL); err != nil {
+			p.logToBuffer(fmt.Sprintf("!!! 警告: 无法杀死进程组 %d: %v", pidToKill, err))
+		} else {
+			p.logToBuffer(fmt.Sprintf("--- 进程组 %d 已终止 (SIGKILL) ---", pidToKill))
+		}
+	}
+}
+
+func (p *ManagedProcess) Write(data string) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if p.ptmx == nil {
+		return fmt.Errorf("进程尚未启动 (ptmx is nil)")
+	}
+	p.logToBuffer(fmt.Sprintf("> %s", data))
+	_, err := p.ptmx.Write([]byte(data + "\n"))
+	return err
+}
+
+func (p *ManagedProcess) setState(newState ProcessState) {
+	p.mutex.Lock()
+
+	if p.State == newState {
+		p.mutex.Unlock()
+		return
+	}
+
+	if p.State == StateStopped && newState == StateFailed {
+		p.mutex.Unlock()
+		return
+	}
+
+	p.State = newState
+	log.Printf("进程 [%s] 状态变为: %s", p.ID, p.State)
+	if newState == StateStopped || newState == StateFailed {
+		p.PID = 0
+		p.StartTime = time.Time{}
+		p.Speed = "N/A"
+	}
+
+	payload := *p
+
+	p.mutex.Unlock()
+
+	globalHub.BroadcastStateUpdate(&payload)
+}
+
+func (p *ManagedProcess) logToBuffer(line string) {
+	p.logBuffer = append(p.logBuffer, line)
+	if len(p.logBuffer) > 100 {
+		p.logBuffer = p.logBuffer[len(p.logBuffer)-100:]
+	}
+	globalHub.BroadcastLog(p.ID, line)
+}
+
+func (p *ManagedProcess) runLoop() {
+	p.setState(StateStarting)
+	p.logToBuffer(fmt.Sprintf("--- 正在启动: %s %s ---", p.WrapperPath, strings.Join(p.Args, " ")))
+
+	p.mutex.Lock()
+	p.cmd = exec.CommandContext(p.ctx, p.WrapperPath, p.Args...)
+	p.cmd.Dir = filepath.Dir(p.WrapperPath)
+	p.mutex.Unlock()
+
+	ptmx, err := pty.Start(p.cmd)
+	if err != nil {
+		p.logToBuffer(fmt.Sprintf("!!! PTY 启动失败: %v", err))
+		p.setState(StateFailed)
+		return
+	}
+	p.ptmx = ptmx
+	defer p.ptmx.Close()
+
+	p.mutex.Lock()
+	if p.cmd != nil && p.cmd.Process != nil {
+		p.PID = p.cmd.Process.Pid
+	} else {
+		p.PID = 0
+	}
+	payload := *p
+	p.mutex.Unlock()
+	globalHub.BroadcastStateUpdate(&payload)
+
+	checkPort := p.getCheckPort()
+	if checkPort == "" {
+		p.logToBuffer("!!! 警告: 无法从参数中找到 -D 端口，健康检查已禁用")
+		p.setState(StateRunning)
+	} else {
+		go p.healthCheck(checkPort)
+	}
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				line := string(buf[:n])
+				lines := strings.Split(line, "\n")
+				for _, l := range lines {
+					if strings.TrimSpace(l) == "" {
+						continue
+					}
+					p.logToBuffer(l)
+					var status WrapperStatus
+					if err := json.Unmarshal([]byte(l), &status); err == nil {
+						if status.Speed != "" {
+							p.mutex.Lock()
+							if p.Speed != status.Speed {
+								p.Speed = status.Speed
+								payload := *p
+								p.mutex.Unlock()
+								globalHub.BroadcastStateUpdate(&payload)
+							} else {
+								p.mutex.Unlock()
+							}
+						}
+					}
+				}
+			}
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				if p.ctx.Err() != nil {
+					break
+				}
+				p.logToBuffer(fmt.Sprintf("!!! PTY 读取错误: %v", err))
+				break
+			}
+		}
+	}()
+
+	p.cmd.Wait()
+
+	p.ptmx = nil
+
+	if p.ctx.Err() == nil {
+		p.logToBuffer("--- 进程意外退出 ---")
+		p.setState(StateFailed)
+		p.logToBuffer("--- 3秒后将自动重启 ---")
+
+		time.Sleep(3 * time.Second)
+		globalManager.mutex.RLock()
+		_, exists := globalManager.Processes[p.ID]
+		globalManager.mutex.RUnlock()
+
+		if exists {
+			p.logToBuffer("--- 正在重启... ---")
+			p.Start()
+		} else {
+			p.logToBuffer("--- 进程已被移除，取消重启 ---")
+		}
+
+	} else {
+		p.logToBuffer("--- 进程已停止 ---")
+		p.setState(StateStopped)
+	}
+}
+
+func (p *ManagedProcess) getCheckPort() string {
+	return p.ID
+}
+
+func (p *ManagedProcess) healthCheck(port string) {
+	checkAddr := "127.0.0.1:" + port
+	
+	initialCheckOK := false
+	for i := 0; i < 10; i++ {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
+			if err == nil {
+				conn.Close()
+				p.logToBuffer(fmt.Sprintf("--- 健康检查通过: %s ---", checkAddr))
+
+				p.mutex.Lock()
+				if p.StartTime.IsZero() {
+					p.StartTime = time.Now()
+				}
+				p.mutex.Unlock()
+
+				p.setState(StateRunning)
+				initialCheckOK = true
+				break
+			}
+		}
+		if initialCheckOK {
+			break
+		}
+	}
+
+	if !initialCheckOK {
+		p.logToBuffer(fmt.Sprintf("!!! 启动失败: 30秒内健康检查未通过 %s", checkAddr))
+		p.setState(StateFailed)
+		return
+	}
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-ticker.C:
+			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
+			if err != nil {
+				p.mutex.Lock()
+				state := p.State
+				p.mutex.Unlock()
+				
+				if state == StateRunning {
+					p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 无法连接到 %s", checkAddr))
+					p.setState(StateFailed)
+				}
+			} else {
+				conn.Close()
+				p.mutex.Lock()
+				state := p.State
+				p.mutex.Unlock()
+
+				if state != StateRunning && state != StateStopped {
+					p.logToBuffer(fmt.Sprintf("--- 健康检查恢复: %s ---", checkAddr))
+					p.mutex.Lock()
+					if p.StartTime.IsZero() {
+						p.StartTime = time.Now()
+					}
+					p.mutex.Unlock()
+					p.setState(StateRunning)
+				}
+			}
+		}
+	}
+}
+
+type Manager struct {
+	WrapperPath string
+	Processes   map[string]*ManagedProcess
+	mutex       sync.RWMutex 
+	ConfigPath  string
+}
+
+func NewManager(wrapperPath string, configPath string) *Manager {
+	m := &Manager{
+		WrapperPath: wrapperPath,
+		Processes:   make(map[string]*ManagedProcess),
+		ConfigPath:  configPath,
+	}
+	m.LoadConfig()
+	return m
+}
+
+func (m *Manager) AddProcess(id string, command string, args []string) (*ManagedProcess, error) {
+	m.mutex.Lock()
+
+	p_exists, exists := m.Processes[id]
+	if exists {
+		log.Printf("进程 [%s] 已存在，将先停止并替换它。", id)
+	}
+
+	p := NewManagedProcess(id, m.WrapperPath, command, args)
+	m.Processes[id] = p
+	m.saveConfig_internal() 
+	
+	m.mutex.Unlock() 
+
+	if exists {
+		p_exists.Stop() 
+	}
+	p.Start() 
+	
+	return p, nil
+}
+
+func (m *Manager) RemoveProcess(id string) error {
+	m.mutex.Lock()
+	p, exists := m.Processes[id]
+	if !exists {
+		m.mutex.Unlock()
+		return fmt.Errorf("未找到 ID 为 %s 的进程", id)
+	}
+
+	delete(m.Processes, id)
+	m.saveConfig_internal()
+	
+	m.mutex.Unlock() 
+
+	p.Stop()
+	globalHub.BroadcastProcessRemoved(id)
+
+	return nil
+}
+func (m *Manager) GetProcess(id string) *ManagedProcess {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.Processes[id]
+}
+func (m *Manager) GetAllProcesses() []*ManagedProcess {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	list := make([]*ManagedProcess, 0, len(m.Processes))
+	for _, p := range m.Processes {
+		list = append(list, p)
+	}
+	return list
+}
+
+func (m *Manager) saveConfig_internal() {
+	type ProcessConfig struct {
+		ID      string   `json:"id"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	}
+	configs := make([]ProcessConfig, 0, len(m.Processes))
+	for _, p := range m.Processes {
+		configs = append(configs, ProcessConfig{ID: p.ID, Command: p.Command, Args: p.Args})
+	}
+
+	data, err := json.MarshalIndent(configs, "", "  ")
+	if err != nil {
+		log.Printf("!!! [SaveConfig BUG] 序列化 manager.json 失败: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(m.ConfigPath, data, 0644); err != nil {
+		log.Printf("!!! [SaveConfig BUG] 写入 manager.json 失败: %v", err)
+	} else {
+		log.Printf("配置已保存到 %s", m.ConfigPath)
+	}
+}
+
+func (m *Manager) LoadConfig() {
+	data, err := os.ReadFile(m.ConfigPath)
+	if err != nil {
+		log.Printf("未找到 %s，全新启动", m.ConfigPath)
+		return
+	}
+
+	type ProcessConfig struct {
+		ID      string   `json:"id"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	}
+	var configs []ProcessConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		log.Printf("%s 解析失败: %v", m.ConfigPath, err)
+		return
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for _, cfg := range configs {
+		p := NewManagedProcess(cfg.ID, m.WrapperPath, cfg.Command, cfg.Args)
+		m.Processes[cfg.ID] = p
+	}
+	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
+	
+	for _, p := range m.Processes {
+		p.Start()
+	}
+}
+
+type Hub struct {
+	clients    map[*websocket.Conn]bool
+	broadcast  chan []byte
+	register   chan *websocket.Conn
+	unregister chan *websocket.Conn
+	mutex      sync.Mutex
+}
+
+func newHub() *Hub {
+	return &Hub{
+		clients:    make(map[*websocket.Conn]bool),
+		broadcast:  make(chan []byte),
+		register:   make(chan *websocket.Conn),
+		unregister: make(chan *websocket.Conn),
+	}
+}
+func (h *Hub) run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.mutex.Lock()
+			h.clients[client] = true
+			h.mutex.Unlock()
+		case client := <-h.unregister:
+			h.mutex.Lock()
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				client.Close()
+			}
+			h.mutex.Unlock()
+		case message := <-h.broadcast:
+			h.mutex.Lock()
+			for client := range h.clients {
+				if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+					log.Printf("WebSocket 写入错误: %v", err)
+					h.unregister <- client
+				}
+			}
+			h.mutex.Unlock()
+		}
+	}
+}
+
+type WSMessage struct {
+	Type    string      `json:"type"`
+	ID      string      `json:"id,omitempty"`
+	Command string      `json:"command,omitempty"`
+	Args    []string    `json:"args,omitempty"`
+	Data    string      `json:"data,omitempty"`
+	Payload interface{} `json:"payload,omitempty"`
+}
+
+func (h *Hub) BroadcastStateUpdate(p *ManagedProcess) {
+	msg := WSMessage{
+		Type:    "state_update",
+		ID:      p.ID,
+		Payload: p,
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+func (h *Hub) BroadcastLog(id string, line string) {
+	msg := WSMessage{
+		Type: "log_line",
+		ID:   id,
+		Data: line,
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
+func (h *Hub) BroadcastProcessRemoved(id string) {
+	msg := WSMessage{
+		Type: "process_removed",
+		ID:   id,
+	}
+	data, _ := json.Marshal(msg)
+	h.broadcast <- data
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+var globalHub *Hub
+var globalManager *Manager
+
+func extractPortFromArgs(args []string) string {
+	for i, arg := range args {
+		if arg == "-D" && i+1 < len(args) {
+			_, port, err := net.SplitHostPort(args[i+1])
+			if err == nil {
+				return port
+			}
+			return args[i+1]
+		}
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-D") {
+			return strings.TrimPrefix(arg, "-D")
+		}
+	}
+	return ""
+}
+
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	globalHub.register <- conn
+
+	allProcs := globalManager.GetAllProcesses()
+	conn.WriteJSON(WSMessage{Type: "full_status", Payload: allProcs})
+
+	for {
+		msgType, message, err := conn.ReadMessage()
+		if err != nil {
+			globalHub.unregister <- conn
+			break
+		}
+		if msgType != websocket.TextMessage {
+			continue
+		}
+
+		var msg WSMessage
+		if err := json.Unmarshal(message, &msg); err != nil {
+			log.Printf("WebSocket JSON 解析失败: %v", err)
+			continue
+		}
+
+		switch msg.Type {
+		case "start_process":
+			port := extractPortFromArgs(msg.Args)
+			if port == "" {
+				log.Println("启动失败：命令中必须包含 -D <port> (例如 -D 10020)")
+				conn.WriteJSON(WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -D <port>"})
+				continue
+			}
+			log.Printf("收到 'start' 命令, ID: %s", port)
+			globalManager.AddProcess(port, msg.Command, msg.Args)
+		
+		case "remove_process":
+			log.Printf("收到 'remove' 命令, ID: %s", msg.ID)
+			globalManager.RemoveProcess(msg.ID)
+
+		case "stdin":
+			p := globalManager.GetProcess(msg.ID)
+			if p != nil {
+				p.Write(msg.Data)
+			}
+		
+		case "get_logs":
+			p := globalManager.GetProcess(msg.ID) 
+			if p != nil {
+				conn.WriteJSON(WSMessage{Type: "full_log", ID: p.ID, Payload: p.logBuffer})
+			}
+		}
+	}
+}
+
+func main() {
+	wrapperBin := flag.String("wrapper-bin", "./wrapper", "zhaarey/wrapper 可执行文件的路径")
+	port := flag.String("port", "8080", "此管理器 Web UI 的监听端口")
+	configJson := flag.String("config", "manager.json", "用于保存进程列表的 JSON 配置文件")
+	flag.Parse()
+
+	if _, err := os.Stat(*wrapperBin); os.IsNotExist(err) {
+		log.Fatalf("错误: wrapper 可执行文件未找到: %s", *wrapperBin)
+	}
+
+	globalHub = newHub()
+	globalManager = NewManager(*wrapperBin, *configJson)
+	go globalHub.run()
+
+	http.HandleFunc("/ws", handleWebSocket)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "index.html")
+	})
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		<-c
+		log.Println("收到关闭信号，正在停止所有子进程...")
+		
+		allProcs := globalManager.GetAllProcesses()
+		for _, p := range allProcs {
+			log.Printf("正在停止 [%s]...", p.ID)
+			p.Stop() 
+		}
+
+		log.Println("等待 2 秒以完成清理...")
+		time.Sleep(2 * time.Second) 
+		
+		log.Println("所有进程已停止。退出。")
+		os.Exit(0)
+	}()
+
+	log.Printf("Wrapper 路径: %s", *wrapperBin)
+	log.Printf("配置 JSON: %s", *configJson)
+	log.Printf("管理器 Web UI 将在 http://0.0.0.0:%s 上运行", *port)
+	if err := http.ListenAndServe(":"+*port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
