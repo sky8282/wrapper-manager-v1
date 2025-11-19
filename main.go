@@ -24,6 +24,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const MaxLogLines = 200 
+
 type WrapperStatus struct {
 	Status     string `json:"status"`
 	Speed      string `json:"speed"`
@@ -76,7 +78,7 @@ func NewManagedProcess(id string, wrapperPath string, command string, args []str
 		State:          StateStopped,
 		ctx:            ctx,
 		cancel:         cancel,
-		logBuffer:      make([]string, 0, 100),
+		logBuffer:      make([]string, 0, MaxLogLines),
 		StartTime:      time.Time{},
 		Speed:          "N/A",
 		NetSpeed:       "N/A",
@@ -155,8 +157,8 @@ func (p *ManagedProcess) setState(newState ProcessState) {
 
 func (p *ManagedProcess) logToBuffer(line string) {
 	p.logBuffer = append(p.logBuffer, line)
-	if len(p.logBuffer) > 100 {
-		p.logBuffer = p.logBuffer[len(p.logBuffer)-100:]
+	if len(p.logBuffer) > MaxLogLines {
+		p.logBuffer = p.logBuffer[len(p.logBuffer)-MaxLogLines:]
 	}
 	globalHub.BroadcastLog(p.ID, line)
 }
@@ -239,15 +241,14 @@ func (p *ManagedProcess) runLoop() {
 	}()
 
 	p.cmd.Wait()
-
 	p.ptmx = nil
 
 	if p.ctx.Err() == nil {
 		p.logToBuffer("--- 进程意外退出 ---")
 		p.setState(StateFailed)
-		p.logToBuffer("--- 3秒后将自动重启 ---")
+		p.logToBuffer("--- 2秒后将自动重启 ---")
 
-		time.Sleep(3 * time.Second)
+		time.Sleep(2 * time.Second)
 		globalManager.mutex.RLock()
 		_, exists := globalManager.Processes[p.ID]
 		globalManager.mutex.RUnlock()
@@ -362,6 +363,98 @@ func NewManager(wrapperPath string, configPath string) *Manager {
 	return m
 }
 
+type ProcessConfig struct {
+	ID      string   `json:"id"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
+}
+
+func (m *Manager) saveConfig_internal() {
+	configs := make([]ProcessConfig, 0, len(m.Processes))
+	for _, p := range m.Processes {
+		configs = append(configs, ProcessConfig{ID: p.ID, Command: p.Command, Args: p.Args})
+	}
+
+	data, err := json.MarshalIndent(configs, "", "  ")
+	if err != nil {
+		log.Printf("!!! [SaveConfig BUG] 序列化 manager.json 失败: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(m.ConfigPath, data, 0644); err != nil {
+		log.Printf("!!! [SaveConfig BUG] 写入 manager.json 失败: %v", err)
+	} else {
+		log.Printf("配置已保存到 %s", m.ConfigPath)
+	}
+}
+
+func (m *Manager) LoadConfig() {
+	data, err := os.ReadFile(m.ConfigPath)
+	if err != nil {
+		log.Printf("未找到 %s，全新启动", m.ConfigPath)
+		return
+	}
+
+	var configs []ProcessConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		log.Printf("%s 解析失败: %v", m.ConfigPath, err)
+		return
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for _, cfg := range configs {
+		p := NewManagedProcess(cfg.ID, m.WrapperPath, cfg.Command, cfg.Args)
+		m.Processes[cfg.ID] = p
+	}
+	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
+}
+
+func (m *Manager) ReloadConfig() {
+	log.Printf("--- 收到 SIGHUP 或热重载请求，正在重新加载配置 ---")	
+	newConfigs := make(map[string]ProcessConfig)
+	data, err := os.ReadFile(m.ConfigPath)
+	if err != nil {
+		log.Printf("!!! 重新加载配置失败: %v", err)
+		return
+	}
+	var configs []ProcessConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		log.Printf("!!! 重新加载配置解析失败: %v", err)
+		return
+	}
+	for _, cfg := range configs {
+		newConfigs[cfg.ID] = cfg
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for id, proc := range m.Processes {
+		if _, exists := newConfigs[id]; !exists {
+			log.Printf("配置中移除进程 [%s]，正在停止...", id)
+			proc.Stop()
+			delete(m.Processes, id)
+			globalHub.BroadcastProcessRemoved(id)
+		}
+	}
+
+	for id, cfg := range newConfigs {
+		if _, exists := m.Processes[id]; !exists {
+			log.Printf("配置中新增进程 [%s]，正在启动...", id)
+			p := NewManagedProcess(id, m.WrapperPath, cfg.Command, cfg.Args)
+			m.Processes[id] = p
+			p.Start()
+		} else {
+		}
+	}
+
+	m.saveConfig_internal()
+	log.Printf("--- 配置热重载完成。当前进程数: %d ---", len(m.Processes))
+}
+
+
 func (m *Manager) AddProcess(id string, command string, args []string) (*ManagedProcess, error) {
 	m.mutex.Lock()
 
@@ -421,59 +514,214 @@ func (m *Manager) GetAllProcesses() []*ManagedProcess {
 	return list
 }
 
-func (m *Manager) saveConfig_internal() {
-	type ProcessConfig struct {
-		ID      string   `json:"id"`
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-	}
-	configs := make([]ProcessConfig, 0, len(m.Processes))
-	for _, p := range m.Processes {
-		configs = append(configs, ProcessConfig{ID: p.ID, Command: p.Command, Args: p.Args})
-	}
-
-	data, err := json.MarshalIndent(configs, "", "  ")
+func readCPUSample() (idle, total uint64) {
+	f, err := os.Open("/proc/stat")
 	if err != nil {
-		log.Printf("!!! [SaveConfig BUG] 序列化 manager.json 失败: %v", err)
 		return
 	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) > 4 && fields[0] == "cpu" {
+			for i := 1; i < len(fields); i++ {
+				val, _ := strconv.ParseUint(fields[i], 10, 64)
+				total += val
+				if i == 4 {
+					idle += val
+				}
+			}
+		}
+	}
+	return
+}
 
-	if err := os.WriteFile(m.ConfigPath, data, 0644); err != nil {
-		log.Printf("!!! [SaveConfig BUG] 写入 manager.json 失败: %v", err)
-	} else {
-		log.Printf("配置已保存到 %s", m.ConfigPath)
+func readMemUsage() float64 {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var total, avail float64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+		if parts[0] == "MemTotal:" {
+			total, _ = strconv.ParseFloat(parts[1], 64)
+		} else if parts[0] == "MemAvailable:" {
+			avail, _ = strconv.ParseFloat(parts[1], 64)
+		}
+	}
+	if total > 0 {
+		return ((total - avail) / total) * 100
+	}
+	return 0
+}
+
+func readNetStats() (rx, tx uint64) {
+	f, err := os.Open("/proc/net/dev")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, ":") {
+			parts := strings.Fields(line)
+			if len(parts) < 10 {
+				continue
+			}
+			if strings.HasPrefix(parts[0], "lo") {
+				continue
+			}
+			
+			cleanParts := strings.Fields(strings.ReplaceAll(line, ":", " "))
+			if len(cleanParts) < 10 {
+				continue
+			}
+			
+			r, _ := strconv.ParseUint(cleanParts[1], 10, 64)
+			t, _ := strconv.ParseUint(cleanParts[9], 10, 64)
+			rx += r
+			tx += t
+		}
+	}
+	return
+}
+
+func monitorSystem() {
+	prevIdle, prevTotal := readCPUSample()
+	prevRx, prevTx := readNetStats()
+	
+	for {
+		time.Sleep(1 * time.Second)
+		currIdle, currTotal := readCPUSample()
+		idleDiff := float64(currIdle - prevIdle)
+		totalDiff := float64(currTotal - prevTotal)
+		cpuUsage := 0.0
+		if totalDiff > 0 {
+			cpuUsage = (1.0 - (idleDiff / totalDiff)) * 100.0
+		}
+		prevIdle, prevTotal = currIdle, currTotal
+
+		memUsage := readMemUsage()
+
+		currRx, currTx := readNetStats()
+		downRate := float64(currRx - prevRx)
+		upRate := float64(currTx - prevTx)
+		prevRx, prevTx = currRx, currTx
+
+		stats := SystemStats{
+			CPUUsage:    cpuUsage,
+			MemUsage:    memUsage,
+			NetDownRate: downRate,
+			NetUpRate:   upRate,
+		}
+		globalHub.BroadcastSystemStats(stats)
 	}
 }
 
-func (m *Manager) LoadConfig() {
-	data, err := os.ReadFile(m.ConfigPath)
+func formatProcessSpeed(bytes uint64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B/s", bytes)
+	}
+	k := float64(bytes) / 1024
+	if k < 1024 {
+		return fmt.Sprintf("%.1f KB/s", k)
+	}
+	m := k / 1024
+	return fmt.Sprintf("%.1f MB/s", m)
+}
+
+func getPortTrafficMap() map[string]uint64 {
+	out, err := exec.Command("ss", "-nitH").Output()
 	if err != nil {
-		log.Printf("未找到 %s，全新启动", m.ConfigPath)
-		return
+		return nil
 	}
 
-	type ProcessConfig struct {
-		ID      string   `json:"id"`
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
-	}
-	var configs []ProcessConfig
-	if err := json.Unmarshal(data, &configs); err != nil {
-		log.Printf("%s 解析失败: %v", m.ConfigPath, err)
-		return
-	}
+	stats := make(map[string]uint64)
+	lines := strings.Split(string(out), "\n")
+	var currentPort string
 
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
 
-	for _, cfg := range configs {
-		p := NewManagedProcess(cfg.ID, m.WrapperPath, cfg.Command, cfg.Args)
-		m.Processes[cfg.ID] = p
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			fields := strings.Fields(line)
+			if len(fields) >= 4 {
+				_, port, err := net.SplitHostPort(fields[3])
+				if err == nil {
+					currentPort = port
+				}
+			}
+		}
+
+		if strings.Contains(line, "bytes_acked:") {
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "bytes_acked:") {
+					valStr := strings.TrimPrefix(part, "bytes_acked:")
+					val, _ := strconv.ParseUint(valStr, 10, 64)
+					if currentPort != "" {
+						stats[currentPort] += val
+					}
+				}
+			}
+		}
 	}
-	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
+	return stats
+}
 
-	for _, p := range m.Processes {
-		p.Start()
+func monitorNetworkSpeed() {
+	for {
+		time.Sleep(1 * time.Second)
+		
+		portStats := getPortTrafficMap()
+		
+		globalManager.mutex.RLock()
+		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
+		for _, p := range globalManager.Processes {
+			procs = append(procs, p)
+		}
+		globalManager.mutex.RUnlock()
+
+		for _, p := range procs {
+			p.mutex.Lock()
+			if p.State == StateRunning {
+				currBytes := portStats[p.ID]
+				
+				if p.prevBytes == 0 {
+					p.prevBytes = currBytes
+					p.NetSpeed = "0 B/s"
+				} else {
+					diff := uint64(0)
+					if currBytes >= p.prevBytes {
+						diff = currBytes - p.prevBytes
+					} else {
+						diff = currBytes
+					}
+					p.NetSpeed = formatProcessSpeed(diff)
+					p.prevBytes = currBytes
+				}
+				
+				payload := *p
+				p.mutex.Unlock()
+				globalHub.BroadcastStateUpdate(&payload)
+			} else {
+				p.prevBytes = 0
+				p.NetSpeed = "N/A"
+				p.mutex.Unlock()
+			}
+		}
 	}
 }
 
@@ -648,216 +896,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func readCPUSample() (idle, total uint64) {
-	f, err := os.Open("/proc/stat")
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	if scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) > 4 && fields[0] == "cpu" {
-			for i := 1; i < len(fields); i++ {
-				val, _ := strconv.ParseUint(fields[i], 10, 64)
-				total += val
-				if i == 4 {
-					idle += val
-				}
-			}
-		}
-	}
-	return
-}
-
-func readMemUsage() float64 {
-	f, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-	var total, avail float64
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		if parts[0] == "MemTotal:" {
-			total, _ = strconv.ParseFloat(parts[1], 64)
-		} else if parts[0] == "MemAvailable:" {
-			avail, _ = strconv.ParseFloat(parts[1], 64)
-		}
-	}
-	if total > 0 {
-		return ((total - avail) / total) * 100
-	}
-	return 0
-}
-
-func readNetStats() (rx, tx uint64) {
-	f, err := os.Open("/proc/net/dev")
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, ":") {
-			parts := strings.Fields(line)
-			if len(parts) < 10 {
-				continue
-			}
-			if strings.HasPrefix(parts[0], "lo") {
-				continue
-			}
-			
-			cleanParts := strings.Fields(strings.ReplaceAll(line, ":", " "))
-			if len(cleanParts) < 10 {
-				continue
-			}
-			
-			r, _ := strconv.ParseUint(cleanParts[1], 10, 64)
-			t, _ := strconv.ParseUint(cleanParts[9], 10, 64)
-			rx += r
-			tx += t
-		}
-	}
-	return
-}
-
-func monitorSystem() {
-	prevIdle, prevTotal := readCPUSample()
-	prevRx, prevTx := readNetStats()
+func handleSignals(m *Manager) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGHUP)
 	
 	for {
-		time.Sleep(1 * time.Second)
-		currIdle, currTotal := readCPUSample()
-		idleDiff := float64(currIdle - prevIdle)
-		totalDiff := float64(currTotal - prevTotal)
-		cpuUsage := 0.0
-		if totalDiff > 0 {
-			cpuUsage = (1.0 - (idleDiff / totalDiff)) * 100.0
-		}
-		prevIdle, prevTotal = currIdle, currTotal
-
-		memUsage := readMemUsage()
-
-		currRx, currTx := readNetStats()
-		downRate := float64(currRx - prevRx)
-		upRate := float64(currTx - prevTx)
-		prevRx, prevTx = currRx, currTx
-
-		stats := SystemStats{
-			CPUUsage:    cpuUsage,
-			MemUsage:    memUsage,
-			NetDownRate: downRate,
-			NetUpRate:   upRate,
-		}
-		globalHub.BroadcastSystemStats(stats)
-	}
-}
-
-func formatProcessSpeed(bytes uint64) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%d B/s", bytes)
-	}
-	k := float64(bytes) / 1024
-	if k < 1024 {
-		return fmt.Sprintf("%.1f KB/s", k)
-	}
-	m := k / 1024
-	return fmt.Sprintf("%.1f MB/s", m)
-}
-
-func getPortTrafficMap() map[string]uint64 {
-	out, err := exec.Command("ss", "-nitH").Output()
-	if err != nil {
-		return nil
-	}
-
-	stats := make(map[string]uint64)
-	lines := strings.Split(string(out), "\n")
-	var currentPort string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			fields := strings.Fields(line)
-			if len(fields) >= 4 {
-				_, port, err := net.SplitHostPort(fields[3])
-				if err == nil {
-					currentPort = port
-				}
-			}
-		}
-
-		if strings.Contains(line, "bytes_acked:") {
-			parts := strings.Fields(line)
-			for _, part := range parts {
-				if strings.HasPrefix(part, "bytes_acked:") {
-					valStr := strings.TrimPrefix(part, "bytes_acked:")
-					val, _ := strconv.ParseUint(valStr, 10, 64)
-					if currentPort != "" {
-						stats[currentPort] += val
-					}
-				}
-			}
-		}
-	}
-	return stats
-}
-
-func monitorNetworkSpeed() {
-	for {
-		time.Sleep(1 * time.Second)
-		portStats := getPortTrafficMap()
-		globalManager.mutex.RLock()
-		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
-		for _, p := range globalManager.Processes {
-			procs = append(procs, p)
-		}
-		globalManager.mutex.RUnlock()
-
-		for _, p := range procs {
-			p.mutex.Lock()
-			if p.State == StateRunning {
-				currBytes := portStats[p.ID]
-				
-				if currBytes > 0 {
-					if p.prevBytes == 0 {
-						p.prevBytes = currBytes
-						p.NetSpeed = "0 B/s"
-					} else {
-						diff := uint64(0)
-						if currBytes >= p.prevBytes {
-							diff = currBytes - p.prevBytes
-						} else {
-							diff = currBytes
-						}
-						p.NetSpeed = formatProcessSpeed(diff)
-						p.prevBytes = currBytes
-					}
-				} else {
-					p.NetSpeed = "0 B/s"
-					p.prevBytes = 0 
-				}
-				
-				payload := *p
-				p.mutex.Unlock()
-				globalHub.BroadcastStateUpdate(&payload)
-			} else {
-				p.prevBytes = 0
-				p.NetSpeed = "N/A"
-				p.mutex.Unlock()
-			}
+		sig := <-c
+		if sig == syscall.SIGHUP {
+			m.ReloadConfig()
 		}
 	}
 }
@@ -874,9 +920,16 @@ func main() {
 
 	globalHub = newHub()
 	globalManager = NewManager(*wrapperBin, *configJson)
+	globalManager.mutex.RLock()
+	for _, p := range globalManager.Processes {
+		p.Start()
+	}
+	globalManager.mutex.RUnlock()
+
 	go globalHub.run()
 	go monitorSystem()
 	go monitorNetworkSpeed()
+	go handleSignals(globalManager)
 
 	http.HandleFunc("/ws", handleWebSocket)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -890,6 +943,7 @@ func main() {
 		log.Println("收到关闭信号，正在停止所有子进程...")
 
 		allProcs := globalManager.GetAllProcesses()
+		
 		for _, p := range allProcs {
 			log.Printf("正在停止 [%s]...", p.ID)
 			p.Stop()
