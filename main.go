@@ -24,7 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const MaxLogLines = 200 
+const MaxLogLines = 200
 
 type WrapperStatus struct {
 	Status     string `json:"status"`
@@ -42,23 +42,24 @@ const (
 )
 
 type ManagedProcess struct {
-	ID             string       `json:"id"`
-	Command        string       `json:"command"`
-	Args           []string     `json:"args"`
-	WrapperPath    string       `json:"-"`
-	State          ProcessState `json:"state"`
-	PID            int          `json:"pid"`
-	StartTime      time.Time    `json:"startTime"`
-	Speed          string       `json:"speed,omitempty"`
-	NetSpeed       string       `json:"netSpeed"`
-	prevBytes      uint64
-	isRemoved      bool
-	ctx            context.Context
-	cancel         context.CancelFunc
-	cmd            *exec.Cmd
-	ptmx           io.ReadWriteCloser
-	mutex          sync.Mutex
-	logBuffer      []string
+	ID          string       `json:"id"`
+	Region      string       `json:"region"`
+	Command     string       `json:"command"`
+	Args        []string     `json:"args"`
+	WrapperPath string       `json:"-"`
+	State       ProcessState `json:"state"`
+	PID         int          `json:"pid"`
+	StartTime   time.Time    `json:"startTime"`
+	Speed       string       `json:"speed,omitempty"`
+	NetSpeed    string       `json:"netSpeed"`
+	prevBytes   uint64
+	isRemoved   bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	cmd         *exec.Cmd
+	ptmx        io.ReadWriteCloser
+	mutex       sync.Mutex
+	logBuffer   []string
 }
 
 type SystemStats struct {
@@ -68,24 +69,29 @@ type SystemStats struct {
 	NetUpRate   float64 `json:"net_up"`
 }
 
-func NewManagedProcess(id string, wrapperPath string, command string, args []string) *ManagedProcess {
+func NewManagedProcess(id string, region string, wrapperPath string, command string, args []string) *ManagedProcess {
 	ctx, cancel := context.WithCancel(context.Background())
+	if region == "" {
+		region = "cn"
+	}
 	return &ManagedProcess{
-		ID:             id,
-		Command:        command,
-		Args:           args,
-		WrapperPath:    wrapperPath,
-		State:          StateStopped,
-		ctx:            ctx,
-		cancel:         cancel,
-		logBuffer:      make([]string, 0, MaxLogLines),
-		StartTime:      time.Time{},
-		Speed:          "N/A",
-		NetSpeed:       "N/A",
-		prevBytes:      0,
-		isRemoved:      false,
+		ID:          id,
+		Region:      region,
+		Command:     command,
+		Args:        args,
+		WrapperPath: wrapperPath,
+		State:       StateStopped,
+		ctx:         ctx,
+		cancel:      cancel,
+		logBuffer:   make([]string, 0, MaxLogLines),
+		StartTime:   time.Time{},
+		Speed:       "N/A",
+		NetSpeed:    "N/A",
+		prevBytes:   0,
+		isRemoved:   false,
 	}
 }
+
 func (p *ManagedProcess) Start() {
 	go p.runLoop()
 }
@@ -163,13 +169,165 @@ func (p *ManagedProcess) logToBuffer(line string) {
 	globalHub.BroadcastLog(p.ID, line)
 }
 
+func copyFileWithPerms(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+
+	return os.Chmod(dst, info.Mode())
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			os.Remove(dstPath)
+			return os.Symlink(linkTarget, dstPath)
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		return copyFileWithPerms(path, dstPath)
+	})
+}
+
+func setupInstance(region string, wrapperPath string) (string, string, error) {
+	absWrapperBin, err := filepath.Abs(wrapperPath)
+	if err != nil {
+		return "", "", err
+	}
+	srcDir := filepath.Dir(absWrapperBin)
+	binName := filepath.Base(absWrapperBin)
+
+	instanceRoot := filepath.Join(srcDir, "instances")
+	instanceDir := filepath.Join(instanceRoot, region)
+
+	if _, err := os.Stat(instanceDir); err == nil {
+		return instanceDir, "./" + binName, nil
+	}
+
+	if err := os.MkdirAll(instanceDir, 0755); err != nil {
+		return "", "", err
+	}
+
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return "", "", err
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "instances" || name == "manager.json" || name == "nohup.out" || strings.HasSuffix(name, ".log") {
+			continue
+		}
+
+		srcPath := filepath.Join(srcDir, name)
+		dstPath := filepath.Join(instanceDir, name)
+
+		if name == "rootfs" {
+			if err := os.MkdirAll(dstPath, 0755); err != nil {
+				return "", "", err
+			}
+			rootfsEntries, err := os.ReadDir(srcPath)
+			if err != nil {
+				return "", "", err
+			}
+			for _, rEntry := range rootfsEntries {
+				rName := rEntry.Name()
+				rSrcPath := filepath.Join(srcPath, rName)
+				rDstPath := filepath.Join(dstPath, rName)
+
+				if rName == "dev" || rName == "proc" || rName == "sys" {
+					if err := os.MkdirAll(rDstPath, 0755); err != nil {
+						log.Printf("创建系统目录失败: %v", err)
+					}
+					continue
+				}
+
+				if rName == "data" {
+					if _, err := os.Stat(rDstPath); os.IsNotExist(err) {
+						if err := copyDir(rSrcPath, rDstPath); err != nil {
+							return "", "", err
+						}
+					}
+				} else {
+					os.RemoveAll(rDstPath)
+					if err := copyDir(rSrcPath, rDstPath); err != nil {
+						return "", "", err
+					}
+				}
+			}
+		} else {
+			if entry.IsDir() {
+				os.RemoveAll(dstPath)
+				if err := copyDir(srcPath, dstPath); err != nil {
+					return "", "", err
+				}
+			} else {
+				os.Remove(dstPath)
+				if err := copyFileWithPerms(srcPath, dstPath); err != nil {
+					return "", "", err
+				}
+			}
+		}
+	}
+
+	return instanceDir, "./" + binName, nil
+}
+
 func (p *ManagedProcess) runLoop() {
 	p.setState(StateStarting)
-	p.logToBuffer(fmt.Sprintf("--- 正在启动: %s %s ---", p.WrapperPath, strings.Join(p.Args, " ")))
+	p.logToBuffer(fmt.Sprintf("--- 正在启动: %s %s (Region: %s) ---", p.WrapperPath, strings.Join(p.Args, " "), p.Region))
+
+	instanceDir, binCommand, err := setupInstance(p.Region, p.WrapperPath)
+	if err != nil {
+		p.logToBuffer(fmt.Sprintf("!!! 实例环境创建失败: %v", err))
+		p.setState(StateFailed)
+		return
+	}
+	p.logToBuffer(fmt.Sprintf("--- 实例环境已就绪: %s ---", instanceDir))
 
 	p.mutex.Lock()
-	p.cmd = exec.CommandContext(p.ctx, p.WrapperPath, p.Args...)
-	p.cmd.Dir = filepath.Dir(p.WrapperPath)
+	p.cmd = exec.CommandContext(p.ctx, binCommand, p.Args...)
+	p.cmd.Dir = instanceDir
 	p.mutex.Unlock()
 
 	ptmx, err := pty.Start(p.cmd)
@@ -365,6 +523,7 @@ func NewManager(wrapperPath string, configPath string) *Manager {
 
 type ProcessConfig struct {
 	ID      string   `json:"id"`
+	Region  string   `json:"region"`
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
 }
@@ -372,7 +531,12 @@ type ProcessConfig struct {
 func (m *Manager) saveConfig_internal() {
 	configs := make([]ProcessConfig, 0, len(m.Processes))
 	for _, p := range m.Processes {
-		configs = append(configs, ProcessConfig{ID: p.ID, Command: p.Command, Args: p.Args})
+		configs = append(configs, ProcessConfig{
+			ID:      p.ID,
+			Region:  p.Region,
+			Command: p.Command,
+			Args:    p.Args,
+		})
 	}
 
 	data, err := json.MarshalIndent(configs, "", "  ")
@@ -405,14 +569,17 @@ func (m *Manager) LoadConfig() {
 	defer m.mutex.Unlock()
 
 	for _, cfg := range configs {
-		p := NewManagedProcess(cfg.ID, m.WrapperPath, cfg.Command, cfg.Args)
+		if cfg.Region == "" {
+			cfg.Region = "cn"
+		}
+		p := NewManagedProcess(cfg.ID, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args)
 		m.Processes[cfg.ID] = p
 	}
 	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
 }
 
 func (m *Manager) ReloadConfig() {
-	log.Printf("--- 收到 SIGHUP 或热重载请求，正在重新加载配置 ---")	
+	log.Printf("--- 收到 SIGHUP 或热重载请求，正在重新加载配置 ---")
 	newConfigs := make(map[string]ProcessConfig)
 	data, err := os.ReadFile(m.ConfigPath)
 	if err != nil {
@@ -425,6 +592,7 @@ func (m *Manager) ReloadConfig() {
 		return
 	}
 	for _, cfg := range configs {
+		if cfg.Region == "" { cfg.Region = "cn" }
 		newConfigs[cfg.ID] = cfg
 	}
 
@@ -442,8 +610,8 @@ func (m *Manager) ReloadConfig() {
 
 	for id, cfg := range newConfigs {
 		if _, exists := m.Processes[id]; !exists {
-			log.Printf("配置中新增进程 [%s]，正在启动...", id)
-			p := NewManagedProcess(id, m.WrapperPath, cfg.Command, cfg.Args)
+			log.Printf("配置中新增进程 [%s] Region: %s，正在启动...", id, cfg.Region)
+			p := NewManagedProcess(id, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args)
 			m.Processes[id] = p
 			p.Start()
 		} else {
@@ -454,8 +622,7 @@ func (m *Manager) ReloadConfig() {
 	log.Printf("--- 配置热重载完成。当前进程数: %d ---", len(m.Processes))
 }
 
-
-func (m *Manager) AddProcess(id string, command string, args []string) (*ManagedProcess, error) {
+func (m *Manager) AddProcess(id string, region string, command string, args []string) (*ManagedProcess, error) {
 	m.mutex.Lock()
 
 	p_exists, exists := m.Processes[id]
@@ -463,7 +630,7 @@ func (m *Manager) AddProcess(id string, command string, args []string) (*Managed
 		log.Printf("进程 [%s] 已存在，将先停止并替换它。", id)
 	}
 
-	p := NewManagedProcess(id, m.WrapperPath, command, args)
+	p := NewManagedProcess(id, region, m.WrapperPath, command, args)
 	m.Processes[id] = p
 	m.saveConfig_internal()
 
@@ -487,15 +654,34 @@ func (m *Manager) RemoveProcess(id string) error {
 
 	p.mutex.Lock()
 	p.isRemoved = true
+	targetRegion := p.Region
 	p.mutex.Unlock()
 
 	delete(m.Processes, id)
 	m.saveConfig_internal()
-
+	
+	hasSiblings := false
+	for _, otherP := range m.Processes {
+		if otherP.Region == targetRegion {
+			hasSiblings = true
+			break
+		}
+	}
 	m.mutex.Unlock()
 
 	p.Stop()
 	globalHub.BroadcastProcessRemoved(id)
+
+	absWrapperBin, _ := filepath.Abs(m.WrapperPath)
+	srcDir := filepath.Dir(absWrapperBin)
+	instanceDir := filepath.Join(srcDir, "instances", targetRegion)
+	
+	if !hasSiblings {
+		log.Printf("区域 [%s] 已无运行实例，清理目录: %s", targetRegion, instanceDir)
+		os.RemoveAll(instanceDir)
+	} else {
+		log.Printf("区域 [%s] 仍有实例运行，保留目录: %s", targetRegion, instanceDir)
+	}
 
 	return nil
 }
@@ -580,12 +766,12 @@ func readNetStats() (rx, tx uint64) {
 			if strings.HasPrefix(parts[0], "lo") {
 				continue
 			}
-			
+
 			cleanParts := strings.Fields(strings.ReplaceAll(line, ":", " "))
 			if len(cleanParts) < 10 {
 				continue
 			}
-			
+
 			r, _ := strconv.ParseUint(cleanParts[1], 10, 64)
 			t, _ := strconv.ParseUint(cleanParts[9], 10, 64)
 			rx += r
@@ -598,7 +784,7 @@ func readNetStats() (rx, tx uint64) {
 func monitorSystem() {
 	prevIdle, prevTotal := readCPUSample()
 	prevRx, prevTx := readNetStats()
-	
+
 	for {
 		time.Sleep(1 * time.Second)
 		currIdle, currTotal := readCPUSample()
@@ -684,9 +870,9 @@ func getPortTrafficMap() map[string]uint64 {
 func monitorNetworkSpeed() {
 	for {
 		time.Sleep(1 * time.Second)
-		
+
 		portStats := getPortTrafficMap()
-		
+
 		globalManager.mutex.RLock()
 		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
 		for _, p := range globalManager.Processes {
@@ -698,7 +884,7 @@ func monitorNetworkSpeed() {
 			p.mutex.Lock()
 			if p.State == StateRunning {
 				currBytes := portStats[p.ID]
-				
+
 				if p.prevBytes == 0 {
 					p.prevBytes = currBytes
 					p.NetSpeed = "0 B/s"
@@ -712,7 +898,7 @@ func monitorNetworkSpeed() {
 					p.NetSpeed = formatProcessSpeed(diff)
 					p.prevBytes = currBytes
 				}
-				
+
 				payload := *p
 				p.mutex.Unlock()
 				globalHub.BroadcastStateUpdate(&payload)
@@ -771,6 +957,7 @@ func (h *Hub) run() {
 type WSMessage struct {
 	Type    string      `json:"type"`
 	ID      string      `json:"id,omitempty"`
+	Region  string      `json:"region,omitempty"`
 	Command string      `json:"command,omitempty"`
 	Args    []string    `json:"args,omitempty"`
 	Data    string      `json:"data,omitempty"`
@@ -870,12 +1057,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "start_process":
 			port := extractPortFromArgs(msg.Args)
 			if port == "" {
-				log.Println("启动失败：命令中必须包含 -D <port> (例如 -D 10020)")
 				conn.WriteJSON(WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -D <port>"})
 				continue
 			}
-			log.Printf("收到 'start' 命令, ID: %s", port)
-			globalManager.AddProcess(port, msg.Command, msg.Args)
+			region := msg.Region
+			if region == "" { region = "cn" }
+
+			log.Printf("收到 'start' 命令, ID: %s, Region: %s", port, region)
+			globalManager.AddProcess(port, region, msg.Command, msg.Args)
 
 		case "remove_process":
 			log.Printf("收到 'remove' 命令, ID: %s", msg.ID)
@@ -899,7 +1088,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 func handleSignals(m *Manager) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP)
-	
+
 	for {
 		sig := <-c
 		if sig == syscall.SIGHUP {
@@ -943,7 +1132,7 @@ func main() {
 		log.Println("收到关闭信号，正在停止所有子进程...")
 
 		allProcs := globalManager.GetAllProcesses()
-		
+
 		for _, p := range allProcs {
 			log.Printf("正在停止 [%s]...", p.ID)
 			p.Stop()
