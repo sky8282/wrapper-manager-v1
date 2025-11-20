@@ -2,7 +2,7 @@
 <html lang="zh-CN" class="light-mode">
 <head>
     <meta charset="UTF-8">
-    <title>Wrapper 仪表盘</title>
+    <title>Wrapper 管理器</title>
     <style>
         :root {
             --bg-color: #f4f6f8;
@@ -64,7 +64,6 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 40px 20px; transition: background-color 0.3s; }
         .header-content { display: flex; align-items: center; margin-bottom: 20px; } 
         h1 { font-weight: 700; margin: 0; }
-
         .header-controls { display: flex; gap: 10px; margin-left: 15px; } 
         .control-button { 
             width: 40px; height: 40px; 
@@ -76,12 +75,16 @@
             justify-content: center;
             cursor: pointer;
             font-size: 20px;
+            line-height: 1;
             transition: all 0.2s;
             color: var(--text-main);
+            text-decoration: none;
+            padding: 0;
         }
         .control-button:hover { 
             background-color: var(--hover-yellow); 
             color: #000; 
+            border-color: var(--hover-yellow);
         }
         
         .sys-stats-container { margin-bottom: 30px; }
@@ -103,11 +106,16 @@
             flex-direction: column; 
             border: 1px solid var(--border-color);
             min-height: 280px; 
-            transition: transform 0.3s, box-shadow 0.3s;
+            transition: transform 0.3s, box-shadow 0.3s, border 0.3s;
+            box-sizing: border-box;
         }
+        
         .process-card:hover { 
             transform: translateY(-5px); 
-            box-shadow: 0 15px 25px rgba(0,0,0,0.15);
+            box-shadow: 0 15px 25px rgba(0,0,0,0.15), 0 0 0 8px var(--warning);
+            border: 1px solid var(--warning); 
+            position: relative;
+            z-index: 1;
         }
 
         .card-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 14px; }
@@ -115,12 +123,16 @@
         
         .label { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px !important; min-width: 70px; display: inline-block; }
         .value { font-family: 'SF Mono', 'Menlo', monospace; font-weight: 500; color: var(--text-main); }
-
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; position: relative; }
         .status-dot.RUNNING { background-color: var(--success); box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2); animation: pulse 2s infinite; }
         .status-dot.STOPPED { background-color: var(--text-sub); }
         .status-dot.STARTING { background-color: var(--warning); }
         .status-dot.FAILED { background-color: var(--danger); }
+        .status-text { font-weight: 600; transition: color 0.3s; }
+        .status-text.RUNNING { color: var(--success); }
+        .status-text.STARTING { color: var(--warning); }
+        .status-text.FAILED { color: var(--danger); }
+        .status-text.STOPPED { color: var(--text-sub); }
 
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4); }
@@ -144,7 +156,6 @@
             outline: none;
         }
         .process-command-edit:focus { border-color: var(--primary); }
-
         .process-buttons { display: flex; gap: 10px; margin-top: 20px; }
         .process-buttons button { 
             flex: 1; 
@@ -164,26 +175,26 @@
         }
         .btn-log { background-color: var(--code-bg); color: var(--text-main); border: 1px solid var(--border-color) !important; }
         .btn-log:hover { background-color: var(--hover-yellow) !important; color: #000 !important; border-color: var(--hover-yellow) !important; }
-
         .btn-restart { background-color: var(--btn-restart-bg); }
         .btn-start { background-color: var(--btn-start-bg); }
         .btn-remove { background-color: var(--btn-remove-bg); }
-        
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
-        .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12p x rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
+        .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 600px; box-shadow: 0 25px 50px -12p x rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .modal-header h2 { margin: 0; font-size: 20px; }
         .close { color: var(--text-sub); font-size: 28px; cursor: pointer; transition: color 0.2s; }
         .close:hover { color: var(--text-main); }
-        
-        /* 通用输入框样式 */
-        .modal-content input[type="text"] { width: 100%; padding: 12px; margin-top: 10px; box-sizing: border-box; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); }
-        
-        /* 下拉菜单样式 */
+        .modal-content input[type="text"] { width: 100%; padding: 12px; box-sizing: border-box; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); }
+        .modal-content input[type="text"]:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
+        .input-group { display: flex; gap: 10px; margin-top: 10px; }
+        .input-group input { flex: 1; margin-top: 0 !important; }
+        .btn-send-cmd { padding: 0 20px; background-color: var(--primary); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        .btn-send-cmd:hover { background-color: var(--hover-yellow); color: #000; }
         .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; }
-
+        .region-select:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
         .modal-label { font-size: 13px; font-weight: bold; margin-top: 15px; display: block; color: var(--text-sub); }
-        #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        #addCommandButton:hover { background-color: var(--hover-yellow); color: #000; }
 
         #terminal-log { 
             background: var(--log-bg);
@@ -211,7 +222,7 @@
     <div class="container">
         
         <div class="header-content">
-            <h1>Wrapper 仪表盘</h1>
+            <h1>Wrapper 管理器</h1>
             <div class="header-controls">
                 <div class="control-button" id="darkModeToggle" title="切换显示模式">
                     <span id="modeIcon">☀️</span>
@@ -219,6 +230,14 @@
                 <div class="control-button" id="addProcessButton" title="添加新进程">
                     +
                 </div>
+                
+                <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器" class="control-button">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                </a>
+
+                <a href="https://github.com/sky8282/apple-music-downloader" target="_blank" title="多账号多线程Go下载器" class="control-button">
+                   <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                </a>
             </div>
         </div>
 
@@ -226,8 +245,8 @@
             <span class="sys-stats">
                 <span class="sys-stat-item">CPU:<strong id="statCpu">0%</strong></span>
                 <span class="sys-stat-item">内存:<strong id="statMem">0%</strong></span>
-                <span class="sys-stat-item">上传↑<strong id="statUp">0 KB/s</strong></span>
-                <span class="sys-stat-item">下载↓<strong id="statDown">0 KB/s</strong></span>
+                <span class="sys-stat-item">上传↑:<strong id="statUp">0 KB/s</strong></span>
+                <span class="sys-stat-item">下载↓:<strong id="statDown">0 KB/s</strong></span>
             </span>
         </div>
         
@@ -246,14 +265,14 @@
             
             <span class="modal-label">区域/账号标识 (输入或从右侧选择):</span>
             <div style="display: flex; gap: 10px; align-items: center;">
-                <input type="text" id="addRegionInput" value="cn" placeholder="自定义 (如 vip1)" style="flex: 1; margin-top: 10px;">
-                <select id="regionSelect" class="region-select" style="width: 120px;">
-                    <option value="">选择...</option>
+                <input type="text" id="addRegionInput" value="cn" placeholder="自定义" style="flex: 1; margin-top: 10px;">
+                <select id="regionSelect" class="region-select" style="flex: 1;">
+                    <option value="">选择账号对应的区域...</option>
                 </select>
             </div>
 
-            <span class="modal-label">启动命令 (必须包含 -D 端口):</span>
-            <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码">
+            <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H, --host=STRING<br>-D, --decrypt-port=INT<br>-M, --m3u8-port=INT<br>-L, --login=STRING<br>-P, --proxy=STRING<br><br></span>
+            <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码 -P 代理">
             
             <button id="addCommandButton">添加并启动</button>
         </div>
@@ -266,7 +285,12 @@
                 <span class="close" data-modal="logModal">&times;</span>
             </div>
             <div id="terminal-log"></div>
-            <input type="text" id="terminalInput" placeholder="在此输入 2FA 验证码并按回车...">
+            
+            <div class="input-group">
+                <input type="text" id="terminalInput" placeholder="输入 2FA 验证码 (按键盘Enter或点击右边发送按钮)">
+                <button id="send2FAButton" class="btn-send-cmd">发送</button>
+            </div>
+            <div style="font-size:12px; color:var(--text-sub); margin-top:5px;">提示：出现 type 6 提示后，请去卡片点击重启按钮</div>
         </div>
     </div>
 
@@ -482,6 +506,7 @@
         const logModalTitle = document.getElementById('logModalTitle');
         const terminalLog = document.getElementById('terminal-log');
         const terminalInput = document.getElementById('terminalInput');
+        const send2FAButton = document.getElementById('send2FAButton');
         
         addProcessButton.onclick = () => addModal.style.display = 'block';
 
@@ -548,6 +573,7 @@
             const statusText = existingCard.querySelector('.status-text');
             dot.className = "status-dot " + proc.state;
             statusText.textContent = proc.state;
+            statusText.className = "status-text " + proc.state;
             existingCard.querySelector('.proc-pid').textContent = proc.pid || 'N/A';
             const runtimeEl = existingCard.querySelector('.proc-runtime');
             const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
@@ -693,6 +719,7 @@
             if (target.classList.contains('btn-log')) {
                 currentLogID = id;
                 logModalTitle.textContent = "进程日志 (ID: " + id + ")";
+                send2FAButton.dataset.id = id;
                 terminalInput.dataset.id = id;
                 logModal.style.display = 'block';
                 ws.send(JSON.stringify({ type: "get_logs", id: id }));
@@ -745,16 +772,23 @@
             addModal.style.display = 'none';
         };
 
+        function sendTerminalData() {
+            const id = terminalInput.dataset.id || send2FAButton.dataset.id;
+            const data = terminalInput.value;
+            if (id && data) {
+                ws.send(JSON.stringify({ type: "stdin", id: id, data: data }));
+                terminalInput.value = "";
+            }
+        }
+
         terminalInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
-                const id = e.target.dataset.id;
-                const data = e.target.value;
-                if (id && data) {
-                    ws.send(JSON.stringify({ type: "stdin", id: id, data: data }));
-                    e.target.value = "";
-                }
+                sendTerminalData();
             }
         });
+
+        send2FAButton.onclick = sendTerminalData;
+
         document.querySelectorAll('.close').forEach(el => {
             el.onclick = () => {
                 document.getElementById(el.dataset.modal).style.display = 'none';
