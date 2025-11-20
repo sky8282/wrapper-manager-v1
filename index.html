@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="light-mode">
 <head>
     <meta charset="UTF-8">
     <title>Wrapper 仪表盘</title>
@@ -169,25 +169,20 @@
         .btn-start { background-color: var(--btn-start-bg); }
         .btn-remove { background-color: var(--btn-remove-bg); }
         
-        .add-card { 
-            background: transparent; 
-            border: 2px dashed var(--border-color); 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 240px; 
-            cursor: pointer; 
-            transition: all 0.2s;
-            color: var(--text-sub);
-        }
-        .add-card:hover { border-color: var(--primary); color: var(--primary); background: rgba(52, 152, 219, 0.03); }
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
         .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12p x rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .modal-header h2 { margin: 0; font-size: 20px; }
         .close { color: var(--text-sub); font-size: 28px; cursor: pointer; transition: color 0.2s; }
         .close:hover { color: var(--text-main); }
+        
+        /* 通用输入框样式 */
         .modal-content input[type="text"] { width: 100%; padding: 12px; margin-top: 10px; box-sizing: border-box; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); }
+        
+        /* 下拉菜单样式 */
+        .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; }
+
+        .modal-label { font-size: 13px; font-weight: bold; margin-top: 15px; display: block; color: var(--text-sub); }
         #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
 
         #terminal-log { 
@@ -206,25 +201,8 @@
 
         .sparkline-container { width: 100%; height: 30px; margin-top: 10px; position: relative; overflow: hidden; } 
         .sparkline-line { fill: none; stroke-width: 1.5; }
-        .sparkline-tooltip {
-            position: fixed; 
-            background: #333;
-            color: white;
-            padding: 2px 5px;
-            border-radius: 3px;
-            font-size: 10px;
-            pointer-events: none;
-            z-index: 1001; 
-            opacity: 0;
-            transition: opacity 0.1s;
-            transform: translate(-50%, -100%); 
-        }
-        .sparkline-v-line {
-            stroke: var(--danger);
-            stroke-width: 1;
-            opacity: 0;
-            transition: opacity 0.1s;
-        }
+        .sparkline-tooltip { position: fixed; background: #333; color: white; padding: 2px 5px; border-radius: 3px; font-size: 10px; pointer-events: none; z-index: 1001; opacity: 0; transition: opacity 0.1s; transform: translate(-50%, -100%); }
+        .sparkline-v-line { stroke: var(--danger); stroke-width: 1; opacity: 0; transition: opacity 0.1s; }
 
     </style>
 </head>
@@ -236,7 +214,7 @@
             <h1>Wrapper 仪表盘</h1>
             <div class="header-controls">
                 <div class="control-button" id="darkModeToggle" title="切换显示模式">
-                    <span id="modeIcon">🌙</span>
+                    <span id="modeIcon">☀️</span>
                 </div>
                 <div class="control-button" id="addProcessButton" title="添加新进程">
                     +
@@ -265,8 +243,18 @@
                 <h2>添加新 Wrapper 进程</h2>
                 <span class="close" data-modal="addModal">&times;</span>
             </div>
-            <p>请输入完整的启动命令 (将自动解析 -D 端口作为 ID):</p>
+            
+            <span class="modal-label">区域/账号标识 (输入或从右侧选择):</span>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <input type="text" id="addRegionInput" value="cn" placeholder="自定义 (如 vip1)" style="flex: 1; margin-top: 10px;">
+                <select id="regionSelect" class="region-select" style="width: 120px;">
+                    <option value="">选择...</option>
+                </select>
+            </div>
+
+            <span class="modal-label">启动命令 (必须包含 -D 端口):</span>
             <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码">
+            
             <button id="addCommandButton">添加并启动</button>
         </div>
     </div>
@@ -302,7 +290,11 @@
         const globalTooltip = document.getElementById('globalTooltip');
 
         let speedHistory = {}; 
-        let currentMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        
+        let currentMode = 'light';
+        document.documentElement.classList.add('light-mode');
+        document.documentElement.classList.remove('dark-mode');
+        modeIcon.textContent = '☀️';
 
         function toggleDarkMode() {
             if (currentMode === 'dark') {
@@ -318,6 +310,34 @@
             }
         }
         darkModeToggle.onclick = toggleDarkMode;
+
+        const regionList = [
+           "cn", "hk", "jp", "kr", "sg", "tw", "us", "ca", "nl", "au", "nz", "my", "th", "vn", "ph", "id", "in", "fr", "de", "it", "es", "gb", "ng", 
+           "se", "no", "fi", "dk", "ie", "ch", "pl", "be", "pt", "at", "cz", "sk", "hu", "gr", "ro", "bg", "lu", "lt", "lv", "ee", "si",
+           "hr", "mt", "cy", "ru", "tr", "il", "ae", "sa", "qa", "kw", "bh", "om", "br", "ar", "mx", "cl", "co", "pe", "uy", "py", "bo",
+           "ec", "za", "ke", "gh", "ma", "dz", "tn", "is", "mc", "li", "rs", "ua", "md", "ge", "am", "az", "kz", "mo", "al", "ba",
+           "mk", "me", "xk"
+        ];
+
+        function initRegionSelect() {
+            const regionSelect = document.getElementById('regionSelect');
+            const addRegionInput = document.getElementById('addRegionInput');
+            
+            regionList.forEach(code => {
+                const option = document.createElement('option');
+                option.value = code;
+                option.textContent = code;
+                regionSelect.appendChild(option);
+            });
+
+            regionSelect.onchange = () => {
+                if (regionSelect.value) {
+                    addRegionInput.value = regionSelect.value;
+                }
+            };
+        }
+        initRegionSelect();
+
 
         function formatSpeed(bytes) {
             if (bytes < 1024) return bytes.toFixed(0) + ' B/s';
@@ -457,6 +477,7 @@
         const addModal = document.getElementById('addModal');
         const logModal = document.getElementById('logModal');
         const addCommandInput = document.getElementById('addCommandInput');
+        const addRegionInput = document.getElementById('addRegionInput');
         const addCommandButton = document.getElementById('addCommandButton');
         const logModalTitle = document.getElementById('logModalTitle');
         const terminalLog = document.getElementById('terminal-log');
@@ -575,6 +596,7 @@
             const card = document.createElement('div');
             card.className = 'process-card';
             card.id = 'card-' + proc.id;
+            card.dataset.region = proc.region || "cn";
             
             const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
             const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
@@ -587,19 +609,15 @@
                         <span class="status-dot ${proc.state}"></span>
                         <span class="status-text">${proc.state}</span>
                     </span>
-                    <span><span class="label">进程ID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
+                    <span><span class="label">PID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
                 </div>
                 
                 <div class="card-row">
-                    <span><span class="label">解密端口:</span><span class="value">${ports.d}</span></span>
-                </div>
-                
-                <div class="card-row">
-                    <span><span class="label">M3U8端口:</span><span class="value">${ports.m}</span></span>
+                    <span><span class="label">区域:</span><strong style="color:var(--primary)">${proc.region || "cn"}</strong></span>
                 </div>
 
                 <div class="card-row">
-                    <span><span class="label">系统:</span><span class="value">Linux (Debian)</span></span>
+                    <span><span class="label">端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
                 </div>
 
                 <div class="card-row">
@@ -619,7 +637,7 @@
                     <button class="btn-log" data-id="${proc.id}">日志</button>
                     <button class="btn-start" data-id="${proc.id}" style="display: ${isStopped ? 'inline-block' : 'none'};">启动</button>
                     <button class="btn-restart" data-id="${proc.id}" style="display: ${isStopped ? 'none' : 'inline-block'};">重启</button>
-                    <button class="btn-remove" data-id="${proc.id}">停止</button>
+                    <button class="btn-remove" data-id="${proc.id}">移除</button>
                 </div>
             `;
             return card;
@@ -683,22 +701,21 @@
             if (target.classList.contains('btn-start') || target.classList.contains('btn-restart')) {
                 const card = document.getElementById('card-' + id);
                 const commandText = card.querySelector('.process-command-edit').value;
+                const region = card.dataset.region;
                 const args = splitCommand(commandText);
                 const newId = parseDPort(args);
                 
                 if (!newId) {
-                    alert("启动命令中必须包含 -D <port> (例如 -D 10020)，其他参数自行输入");
+                    alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
                     return;
                 }
                 
-                if (newId !== id) {
-                    if (confirm(`端口 ID 已从 ${id} 更改为 ${newId}。是否继续? 这将移除旧进程并启动新进程。`)) {
-                        ws.send(JSON.stringify({ type: "remove_process", id: id }));
-                        ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
-                    }
-                } else {
-                    ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
-                }
+                ws.send(JSON.stringify({ 
+                    type: "start_process", 
+                    command: commandText, 
+                    args: args, 
+                    region: region 
+                }));
             }
                         
             if (target.classList.contains('btn-remove')) {
@@ -710,15 +727,21 @@
 
         addCommandButton.onclick = () => {
             const commandText = addCommandInput.value;
+            const regionVal = addRegionInput.value.trim() || "cn";
             const args = splitCommand(commandText);
             const id = parseDPort(args);
 
             if (!id) {
-                alert("启动命令中必须包含 -D <port> (例如 -D 10020)，其他参数自行输入");
+                alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
                 return;
             }
 
-            ws.send(JSON.stringify({ type: "start_process", command: commandText, args: args }));
+            ws.send(JSON.stringify({ 
+                type: "start_process", 
+                command: commandText, 
+                args: args, 
+                region: regionVal 
+            }));
             addModal.style.display = 'none';
         };
 
