@@ -49,10 +49,14 @@ chmod +x wrapper-manager
 * --wrapper-bin: 指定被管理的二进制文件路径（默认为 ./wrapper）。
 * --port: Web 界面监听端口（默认为 8080）。
 * --config: 配置文件路径（默认为 manager.json，会自动创建）。
+* --map: 启动 （账号区域） 和 对应的端口 （解密端口:m3u8端口）
 
 ### 使用以下命令启动管理器：
+* 下方代码含义：cn=账号区域，8888为解密端口，8889为m3u8端口
+* 如要新增us区域，格式就这样：./wrapper-manager -map "cn=8888:8889,jp=9998:9999,us=10000:10001"
+* 请根据自身区域进行修改并启动
 ```text
-./wrapper-manager --wrapper-bin="./wrapper" --port=8080
+./wrapper-manager -map "cn=8888:8889,jp=9998:9999"
 ```
 ### 在web界面添加新进程：
 * 点击仪表盘上的 "+ 添加新进程" 卡片。
