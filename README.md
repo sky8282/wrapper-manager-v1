@@ -1,6 +1,5 @@
 
-![1](https://github.com/user-attachments/assets/0533a186-10ac-423c-b839-4e03c7a379ec)
-
+![2](https://github.com/user-attachments/assets/24df2618-d522-4382-86bd-fbb8307981eb)
 
 # wrapper-manager-v1版
 一个基于 Web 的轻量级进程管理工具，专为管理 `wrapper` 二进制程序设计。它提供了一个可视化的仪表盘，支持多进程并发管理、日志实时查看、健康检查以及断线自动重启。
