@@ -55,6 +55,7 @@ chmod +x wrapper-manager
 * 下方代码含义：cn=账号区域，8888为解密端口，8889为m3u8端口
 * 如要新增us区域，格式就这样：./wrapper-manager -map "cn=8888:8889,jp=9998:9999,us=10000:10001"
 * 请根据自身区域进行修改并启动
+* 下载器的 config.yaml里 decrypt-m3u8-port 填入ip:8888 和 get-m3u8-port 填入ip:8889 就可以实现负载均衡
 ```text
 ./wrapper-manager -map "cn=8888:8889,jp=9998:9999"
 ```
