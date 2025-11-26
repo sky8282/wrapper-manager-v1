@@ -62,9 +62,34 @@
         }
 
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 40px 20px; transition: background-color 0.3s; }
-        .header-content { display: flex; align-items: center; margin-bottom: 20px; } 
-        h1 { font-weight: 700; margin: 0; }
-        .header-controls { display: flex; gap: 10px; margin-left: 15px; } 
+        .header-content { display: flex; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; } 
+        h1 { font-weight: 700; margin: 0; margin-right: auto; }
+        .header-controls { display: flex; gap: 10px; align-items: center; } 
+        
+        .filter-input {
+            height: 40px;
+            padding: 0 15px;
+            border-radius: 8px;
+            border: 1px solid #bdc3c7;
+            background: var(--bg-color);
+            color: var(--text-main);
+            outline: none;
+            width: 140px;
+            font-size: 16px;
+            font-family: monospace;
+            box-sizing: border-box;
+            transition: all 0.2s;
+        }
+        
+        html.dark-mode .filter-input {
+            border-color: var(--border-color);
+        }
+
+        .filter-input:focus {
+            border-color: var(--hover-yellow);
+            box-shadow: 0 0 0 1.5px var(--hover-yellow);
+        }
+
         .control-button { 
             width: 40px; height: 40px; 
             border-radius: 50%; 
@@ -80,6 +105,7 @@
             color: var(--text-main);
             text-decoration: none;
             padding: 0;
+            flex-shrink: 0;
         }
         .control-button:hover { 
             background-color: var(--hover-yellow); 
@@ -87,8 +113,8 @@
             border-color: var(--hover-yellow);
         }
         
-        .sys-stats-container { margin-bottom: 30px; }
-        .sys-stats { font-size: 13px; background: var(--card-bg); padding: 8px 16px; border-radius: 50px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: inline-flex; gap: 20px; color: var(--text-sub); border: 1px solid var(--border-color); }
+        .sys-stats-container { margin-bottom: 12px; }
+        .sys-stats { font-size: 13px; background: var(--card-bg); padding: 8px 16px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: inline-flex; gap: 20px; color: var(--text-sub); border: 1px solid var(--border-color); }
         .sys-stat-item strong { color: var(--primary); margin-left: 4px; font-family: monospace; }
 
         .container { max-width: 1200px; margin: 0 auto; }
@@ -122,6 +148,8 @@
         .card-row.header { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); justify-content: space-between; }
         
         .label { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px !important; min-width: 70px; display: inline-block; }
+        .label-pid { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px !important; display: inline-block; }
+        
         .value { font-family: 'SF Mono', 'Menlo', monospace; font-weight: 500; color: var(--text-main); }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; position: relative; }
         .status-dot.RUNNING { background-color: var(--success); box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2); animation: pulse 2s infinite; }
@@ -173,7 +201,7 @@
             color: #000 !important;
             opacity: 1;
         }
-        .btn-log { background-color: var(--code-bg); color: var(--text-main); border: 1px solid var(--border-color) !important; }
+        .btn-log { background-color: #74b9ff; color: #fff; border: none !important; }
         .btn-log:hover { background-color: var(--hover-yellow) !important; color: #000 !important; border-color: var(--hover-yellow) !important; }
         .btn-restart { background-color: var(--btn-restart-bg); }
         .btn-start { background-color: var(--btn-start-bg); }
@@ -190,7 +218,7 @@
         .input-group input { flex: 1; margin-top: 0 !important; }
         .btn-send-cmd { padding: 0 20px; background-color: var(--primary); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
         .btn-send-cmd:hover { background-color: var(--hover-yellow); color: #000; }
-        .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; }
+        .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; transition: all 0.2s; }
         .region-select:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
         .modal-label { font-size: 13px; font-weight: bold; margin-top: 15px; display: block; color: var(--text-sub); }
         #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
@@ -224,11 +252,17 @@
         <div class="header-content">
             <h1>Wrapper 管理器</h1>
             <div class="header-controls">
+                
+                <input type="text" id="regionFilter" class="filter-input" placeholder="筛选区域如:cn">
+
                 <div class="control-button" id="darkModeToggle" title="切换显示模式">
                     <span id="modeIcon">☀️</span>
                 </div>
                 <div class="control-button" id="addProcessButton" title="添加新进程">
-                    +
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
                 </div>
                 
                 <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器" class="control-button">
@@ -271,7 +305,7 @@
                 </select>
             </div>
 
-            <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H, --host=STRING<br>-D, --decrypt-port=INT<br>-M, --m3u8-port=INT<br>-L, --login=STRING<br>-P, --proxy=STRING<br><br></span>
+            <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H 指定解密ip<br>-D 指定解密端口<br>-M 指定m3u8端口<br>-L 登录账号<br>-P 指定代理<br><br></span>
             <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -L 邮箱:密码 -P 代理">
             
             <button id="addCommandButton">添加并启动</button>
@@ -312,8 +346,10 @@
         const darkModeToggle = document.getElementById('darkModeToggle');
         const modeIcon = document.getElementById('modeIcon');
         const globalTooltip = document.getElementById('globalTooltip');
+        const regionFilter = document.getElementById('regionFilter');
 
         let speedHistory = {}; 
+        let globalOSInfo = "Loading...";
         
         let currentMode = 'light';
         document.documentElement.classList.add('light-mode');
@@ -361,6 +397,22 @@
             };
         }
         initRegionSelect();
+
+        function applyFilter() {
+            const filterVal = regionFilter.value.trim().toLowerCase();
+            const cards = document.querySelectorAll('.process-card');
+            
+            cards.forEach(card => {
+                const region = card.dataset.region ? card.dataset.region.toLowerCase() : '';
+                if (filterVal === '' || region.includes(filterVal)) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        regionFilter.addEventListener('input', applyFilter);
 
 
         function formatSpeed(bytes) {
@@ -474,6 +526,7 @@
                     break;
                 case "state_update":
                     updateProcessCard(msg.payload);
+                    applyFilter();
                     break;
                 case "log_line":
                     appendLog(msg.id, msg.data);
@@ -493,6 +546,14 @@
                     statMem.textContent = msg.payload.mem.toFixed(1) + '%';
                     statDown.textContent = formatSpeed(msg.payload.net_down);
                     statUp.textContent = formatSpeed(msg.payload.net_up);
+                    if (msg.payload.os_info) {
+                        globalOSInfo = msg.payload.os_info;
+                        document.querySelectorAll('.proc-os-info').forEach(el => {
+                            if (el.textContent === "Loading...") {
+                                el.textContent = globalOSInfo;
+                            }
+                        });
+                    }
                     break;
             }
         };
@@ -531,6 +592,7 @@
                     processListEl.appendChild(card);
                     updateProcessCard(proc); 
                 });
+                applyFilter();
             }
         }
 
@@ -635,15 +697,19 @@
                         <span class="status-dot ${proc.state}"></span>
                         <span class="status-text">${proc.state}</span>
                     </span>
-                    <span><span class="label">PID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
+                    <span><span class="label-pid">PID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
                 </div>
                 
                 <div class="card-row">
-                    <span><span class="label">区域:</span><strong style="color:var(--primary)">${proc.region || "cn"}</strong></span>
+                    <span><span class="label">操作系统:</span><span class="value proc-os-info">${globalOSInfo}</span></span>
                 </div>
 
                 <div class="card-row">
-                    <span><span class="label">端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
+                    <span><span class="label">账号区域:</span><strong style="color:var(--primary)">${proc.region || "cn"}</strong></span>
+                </div>
+
+                <div class="card-row">
+                    <span><span class="label">解密端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
                 </div>
 
                 <div class="card-row">
