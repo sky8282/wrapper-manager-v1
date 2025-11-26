@@ -29,6 +29,13 @@ import (
 
 const MaxLogLines = 200
 
+// ================== 检测重启进程关键字 ==================
+var GlobalRestartPatterns = []string{
+	"KDCanProcessCKC",
+//	"123", // 你添加的关键字比如 123
+}
+// ========================================================
+
 type WrapperStatus struct {
 	Status     string `json:"status"`
 	Speed      string `json:"speed"`
@@ -52,25 +59,27 @@ type ProxyUpdate struct {
 }
 
 type ManagedProcess struct {
-	ID          string       `json:"id"`
-	M3U8Port    string       `json:"m3u8Port"`
-	Region      string       `json:"region"`
-	Command     string       `json:"command"`
-	Args        []string     `json:"args"`
-	WrapperPath string       `json:"-"`
-	State       ProcessState `json:"state"`
-	PID         int          `json:"pid"`
-	StartTime   time.Time    `json:"startTime"`
-	Speed       string       `json:"speed,omitempty"`
-	NetSpeed    string       `json:"netSpeed"`
-	prevBytes   uint64
-	isRemoved   bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	cmd         *exec.Cmd
-	ptmx        io.ReadWriteCloser
-	mutex       sync.Mutex
-	logBuffer   []string
+	ID              string       `json:"id"`
+	M3U8Port        string       `json:"m3u8Port"`
+	Region          string       `json:"region"`
+	Command         string       `json:"command"`
+	Args            []string     `json:"args"`
+	RestartPatterns []string     `json:"restartPatterns"`
+	WrapperPath     string       `json:"-"`
+	State           ProcessState `json:"state"`
+	PID             int          `json:"pid"`
+	StartTime       time.Time    `json:"startTime"`
+	Speed           string       `json:"speed,omitempty"`
+	NetSpeed        string       `json:"netSpeed"`
+	prevBytes       uint64
+	isRemoved       bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	cmd             *exec.Cmd
+	ptmx            io.ReadWriteCloser
+	mutex           sync.Mutex
+	logBuffer       []string
+	restartCounter  int
 }
 
 type SystemStats struct {
@@ -81,10 +90,11 @@ type SystemStats struct {
 }
 
 type ProcessConfig struct {
-	ID      string   `json:"id"`
-	Region  string   `json:"region"`
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
+	ID              string   `json:"id"`
+	Region          string   `json:"region"`
+	Command         string   `json:"command"`
+	Args            []string `json:"args"`
+	RestartPatterns []string `json:"restartPatterns"`
 }
 
 type Manager struct {
@@ -144,29 +154,36 @@ func getPortFromArgs(args []string, flagName string) string {
 	return ""
 }
 
-func NewManagedProcess(id string, region string, wrapperPath string, command string, args []string) *ManagedProcess {
+func NewManagedProcess(id string, region string, wrapperPath string, command string, args []string, patterns []string) *ManagedProcess {
 	ctx, cancel := context.WithCancel(context.Background())
 	if region == "" {
 		region = "cn"
 	}
 	mPort := getPortFromArgs(args, "-M")
 
+	if len(patterns) == 0 {
+		patterns = make([]string, len(GlobalRestartPatterns))
+		copy(patterns, GlobalRestartPatterns)
+	}
+
 	return &ManagedProcess{
-		ID:          id,
-		M3U8Port:    mPort,
-		Region:      region,
-		Command:     command,
-		Args:        args,
-		WrapperPath: wrapperPath,
-		State:       StateStopped,
-		ctx:         ctx,
-		cancel:      cancel,
-		logBuffer:   make([]string, 0, MaxLogLines),
-		StartTime:   time.Time{},
-		Speed:       "N/A",
-		NetSpeed:    "N/A",
-		prevBytes:   0,
-		isRemoved:   false,
+		ID:              id,
+		M3U8Port:        mPort,
+		Region:          region,
+		Command:         command,
+		Args:            args,
+		RestartPatterns: patterns,
+		WrapperPath:     wrapperPath,
+		State:           StateStopped,
+		ctx:             ctx,
+		cancel:          cancel,
+		logBuffer:       make([]string, 0, MaxLogLines),
+		StartTime:       time.Time{},
+		Speed:           "N/A",
+		NetSpeed:        "N/A",
+		prevBytes:       0,
+		isRemoved:       false,
+		restartCounter:  0,
 	}
 }
 
@@ -228,6 +245,7 @@ func (p *ManagedProcess) setState(newState ProcessState) {
 		p.Speed = "N/A"
 		p.NetSpeed = "N/A"
 		p.prevBytes = 0
+		p.restartCounter = 0
 	}
 
 	region := p.Region
@@ -388,6 +406,10 @@ func setupInstance(region string, wrapperPath string) (string, string, error) {
 func (p *ManagedProcess) runLoop() {
 	p.setState(StateStarting)
 	p.logToBuffer(fmt.Sprintf("--- 正在启动: %s %s (Region: %s) ---", p.WrapperPath, strings.Join(p.Args, " "), p.Region))
+	if len(p.RestartPatterns) > 0 {
+		p.logToBuffer(fmt.Sprintf("--- 监控重启关键词: %v ---", p.RestartPatterns))
+	}
+
 	instanceDir, binCommand, err := setupInstance(p.Region, p.WrapperPath)
 	if err != nil {
 		p.logToBuffer(fmt.Sprintf("!!! 实例环境创建失败: %v", err))
@@ -425,6 +447,9 @@ func (p *ManagedProcess) runLoop() {
 	}
 	go func() {
 		buf := make([]byte, 4096)
+		p.restartCounter = 0
+		var firstPatternTime time.Time
+
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
@@ -434,9 +459,41 @@ func (p *ManagedProcess) runLoop() {
 					if strings.TrimSpace(l) == "" {
 						continue
 					}
-					if strings.Contains(l, "WARNING:") {
+					
+					isWarning := strings.Contains(l, "WARNING:")
+
+					matched := false
+					for _, pattern := range p.RestartPatterns {
+						if strings.Contains(l, pattern) {
+							matched = true
+							break
+						}
+					}
+
+					if matched {
+						now := time.Now()
+						if p.restartCounter == 0 || now.Sub(firstPatternTime) > 60*time.Second {
+							p.restartCounter = 1
+							firstPatternTime = now
+						} else {
+							p.restartCounter++
+						}
+						
+						if p.restartCounter >= 3 {
+							p.logToBuffer(fmt.Sprintf("!!! [监控] 60秒内检测到3次异常，触发重启: %s", strings.TrimSpace(l)))
+							p.mutex.Lock()
+							if p.cmd != nil && p.cmd.Process != nil {
+								p.cmd.Process.Kill()
+							}
+							p.mutex.Unlock()
+							p.restartCounter = 0
+						}
+					}
+
+					if isWarning {
 						continue
 					}
+
 					p.logToBuffer(l)
 					var status WrapperStatus
 					if err := json.Unmarshal([]byte(l), &status); err == nil {
@@ -469,7 +526,7 @@ func (p *ManagedProcess) runLoop() {
 	p.cmd.Wait()
 	p.ptmx = nil
 	if p.ctx.Err() == nil {
-		p.logToBuffer("--- 进程意外退出 ---")
+		p.logToBuffer("--- 进程意外退出 (或被监控触发重启) ---")
 		p.setState(StateFailed)
 		p.logToBuffer("--- 2秒后将自动重启 ---")
 		time.Sleep(2 * time.Second)
@@ -564,10 +621,11 @@ func (m *Manager) saveConfig_internal() {
 	configs := make([]ProcessConfig, 0, len(m.Processes))
 	for _, p := range m.Processes {
 		configs = append(configs, ProcessConfig{
-			ID:      p.ID,
-			Region:  p.Region,
-			Command: p.Command,
-			Args:    p.Args,
+			ID:              p.ID,
+			Region:          p.Region,
+			Command:         p.Command,
+			Args:            p.Args,
+			RestartPatterns: p.RestartPatterns,
 		})
 	}
 	data, err := json.MarshalIndent(configs, "", "  ")
@@ -599,7 +657,7 @@ func (m *Manager) LoadConfig() {
 		if cfg.Region == "" {
 			cfg.Region = "cn"
 		}
-		p := NewManagedProcess(cfg.ID, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args)
+		p := NewManagedProcess(cfg.ID, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args, cfg.RestartPatterns)
 		m.Processes[cfg.ID] = p
 	}
 	log.Printf("从 %s 加载了 %d 个进程配置", m.ConfigPath, len(configs))
@@ -641,7 +699,7 @@ func (m *Manager) ReloadConfig() {
 	for id, cfg := range newConfigs {
 		if _, exists := m.Processes[id]; !exists {
 			log.Printf("配置中新增进程 [%s] Region: %s，正在启动...", id, cfg.Region)
-			p := NewManagedProcess(id, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args)
+			p := NewManagedProcess(id, cfg.Region, m.WrapperPath, cfg.Command, cfg.Args, cfg.RestartPatterns)
 			m.Processes[id] = p
 			p.Start()
 		}
@@ -656,7 +714,7 @@ func (m *Manager) AddProcess(id string, region string, command string, args []st
 	if exists {
 		log.Printf("进程 [%s] 已存在，将先停止并替换它。", id)
 	}
-	p := NewManagedProcess(id, region, m.WrapperPath, command, args)
+	p := NewManagedProcess(id, region, m.WrapperPath, command, args, nil)
 	m.Processes[id] = p
 	m.saveConfig_internal()
 	m.mutex.Unlock()
