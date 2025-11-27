@@ -29,20 +29,16 @@ import (
 
 const MaxLogLines = 200
 
-// ================== 检测重启进程关键字与缓冲区大小 ==================
 var GlobalRestartPatterns = []string{
 	"KDCanProcessCKC",
-//	"123", // 新添加的关键字比如 123
 }
 
-// 128KB 缓冲区，优化内存复用
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 128*1024) // 128KB buffer
+		b := make([]byte, 128*1024)
 		return &b
 	},
 }
-// ===============================================================
 
 type WrapperStatus struct {
 	Status     string `json:"status"`
@@ -480,7 +476,7 @@ func (p *ManagedProcess) runLoop() {
 		p.setState(StateFailed)
 		return
 	}
-	p.logToBuffer(fmt.Sprintf("--- 实例环境已就绪: %s ---", instanceDir))	
+	p.logToBuffer(fmt.Sprintf("--- 实例环境已就绪: %s ---", instanceDir))
 	processStartTime := time.Now()
 	p.mutex.Lock()
 	p.cmd = exec.CommandContext(p.ctx, binCommand, p.Args...)
@@ -506,15 +502,18 @@ func (p *ManagedProcess) runLoop() {
 		payload := *p
 		p.mutex.Unlock()
 		globalHub.BroadcastStateUpdate(&payload)
-		
+
+		healthCtx, healthCancel := context.WithCancel(p.ctx)
+		defer healthCancel()
+
 		checkPort := p.getCheckPort()
 		if checkPort == "" {
 			p.logToBuffer("!!! 提示: 无法从参数中找到 -D 端口，健康检查已禁用")
 			p.setState(StateRunning)
 		} else {
-			go p.healthCheck(checkPort)
+			go p.healthCheck(healthCtx, checkPort)
 		}
-		
+
 		func() {
 			buf := make([]byte, 4096)
 			p.restartCounter = 0
@@ -529,7 +528,7 @@ func (p *ManagedProcess) runLoop() {
 						if strings.TrimSpace(l) == "" {
 							continue
 						}
-						
+
 						isWarning := strings.Contains(l, "WARNING:")
 
 						matched := false
@@ -548,7 +547,7 @@ func (p *ManagedProcess) runLoop() {
 							} else {
 								p.restartCounter++
 							}
-							
+
 							if p.restartCounter >= 3 {
 								p.logToBuffer(fmt.Sprintf("!!! [监控] 60秒内检测到3次异常，触发重启: %s", strings.TrimSpace(l)))
 								p.mutex.Lock()
@@ -593,15 +592,16 @@ func (p *ManagedProcess) runLoop() {
 				}
 			}
 		}()
-		
+
 		p.cmd.Wait()
+		healthCancel()
 		p.ptmx = nil
 	}
 
 	if p.ctx.Err() == nil {
 		p.logToBuffer("--- 进程意外退出 (或被监控触发重启) ---")
 		p.setState(StateFailed)
-		
+
 		if time.Since(processStartTime) > 60*time.Second {
 			p.mutex.Lock()
 			p.RetryCount = 0
@@ -620,10 +620,10 @@ func (p *ManagedProcess) runLoop() {
 			globalManager.mutex.RLock()
 			_, exists := globalManager.Processes[p.ID]
 			globalManager.mutex.RUnlock()
-			
+
 			if exists {
 				p.logToBuffer("--- 正在重启... ---")
-				p.Start() 
+				p.Start()
 			} else {
 				p.logToBuffer("--- 进程已被移除，取消重启 ---")
 			}
@@ -640,13 +640,13 @@ func (p *ManagedProcess) getCheckPort() string {
 	return p.ID
 }
 
-func (p *ManagedProcess) healthCheck(port string) {
+func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	checkAddr := "127.0.0.1:" + port
 	initialCheckOK := false
 
 	for i := 0; i < 20; i++ {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-time.After(5 * time.Second):
 			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
@@ -670,8 +670,8 @@ func (p *ManagedProcess) healthCheck(port string) {
 
 	if !initialCheckOK {
 		p.logToBuffer(fmt.Sprintf("!!! 启动失败: 100秒内健康检查未通过 %s", checkAddr))
+		p.forceKill()
 		p.setState(StateFailed)
-		p.forceKill() 
 		return
 	}
 
@@ -679,7 +679,7 @@ func (p *ManagedProcess) healthCheck(port string) {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
@@ -689,8 +689,8 @@ func (p *ManagedProcess) healthCheck(port string) {
 				p.mutex.Unlock()
 				if state == StateRunning {
 					p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 无法连接到 %s", checkAddr))
-					p.setState(StateFailed)
 					p.forceKill()
+					p.setState(StateFailed)
 					return
 				}
 			} else {
@@ -992,7 +992,7 @@ func monitorSystem() {
 		downRate := float64(currRx - prevRx)
 		upRate := float64(currTx - prevTx)
 		prevRx, prevTx = currRx, currTx
-		
+
 		stats := SystemStats{
 			OSInfo:      globalManager.ServerOS,
 			CPUUsage:    cpuUsage,
