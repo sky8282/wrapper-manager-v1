@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <title>Wrapper 管理器</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <style>
         :root {
             --bg-color: #f4f6f8;
@@ -207,7 +210,7 @@
         .btn-start { background-color: var(--btn-start-bg); }
         .btn-remove { background-color: var(--btn-remove-bg); }
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
-        .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 600px; box-shadow: 0 25px 50px -12p x rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
+        .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
         .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .modal-header h2 { margin: 0; font-size: 20px; }
         .close { color: var(--text-sub); font-size: 28px; cursor: pointer; transition: color 0.2s; }
@@ -224,18 +227,15 @@
         #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
         #addCommandButton:hover { background-color: var(--hover-yellow); color: #000; }
 
-        #terminal-log { 
-            background: var(--log-bg);
-            color: var(--log-fg); 
-            height: 450px; 
-            overflow-y: auto; 
-            padding: 15px; 
-            border-radius: 8px; 
-            font-family: 'SF Mono', 'Menlo', monospace; 
-            font-size: 13px; 
-            line-height: 1.5; 
-            white-space: pre-wrap; 
-            border: 1px solid var(--border-color); 
+        #terminal-container {
+            width: 100%;
+            height: 450px;
+            background: #1c1c1c;
+            border-radius: 8px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid var(--border-color);
+            overflow: hidden; 
         }
 
         .sparkline-container { width: 100%; height: 30px; margin-top: 10px; position: relative; overflow: hidden; } 
@@ -318,7 +318,7 @@
                 <h2 id="logModalTitle">进程日志</h2>
                 <span class="close" data-modal="logModal">&times;</span>
             </div>
-            <div id="terminal-log"></div>
+            <div id="terminal-container"></div>
             
             <div class="input-group">
                 <input type="text" id="terminalInput" placeholder="输入 2FA 验证码 (按键盘Enter或点击右边发送按钮)">
@@ -329,14 +329,10 @@
     </div>
 
     <script>
-        const ws = new WebSocket("ws://" + window.location.host + "/ws");
+        let ws;
         const MAX_HISTORY_POINTS = 900; 
         const DISPLAY_POINTS = 60; 
         const SVG_HEIGHT = 30;
-
-        ws.onopen = () => console.log("WebSocket 已连接");
-        ws.onclose = () => console.log("WebSocket 已断开");
-        ws.onerror = (err) => console.error("WebSocket 错误:", err);
 
         const statCpu = document.getElementById('statCpu');
         const statMem = document.getElementById('statMem');
@@ -347,6 +343,79 @@
         const modeIcon = document.getElementById('modeIcon');
         const globalTooltip = document.getElementById('globalTooltip');
         const regionFilter = document.getElementById('regionFilter');
+        const terminalContainer = document.getElementById('terminal-container');
+        
+        let term;
+        let fitAddon;
+
+        function connectWebSocket() {
+            ws = new WebSocket("ws://" + window.location.host + "/ws");
+            
+            ws.onopen = () => console.log("WebSocket 已连接");
+            
+            ws.onclose = () => {
+                console.log("WebSocket 已断开，3秒后重连...");
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (err) => console.error("WebSocket 错误:", err);
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                switch (msg.type) {
+                    case "full_status":
+                        renderProcessList(msg.payload);
+                        break;
+                    case "state_update":
+                        updateProcessCard(msg.payload);
+                        applyFilter();
+                        break;
+                    case "log_line":
+                        appendLog(msg.id, msg.data);
+                        break;
+                    case "full_log":
+                        renderFullLog(msg.id, msg.payload);
+                        break;
+                    case "process_removed":
+                        const card = document.getElementById("card-" + msg.id);
+                        if (card) {
+                            card.remove();
+                            delete speedHistory[msg.id];
+                        }
+                        break;
+                    case "system_stats":
+                        statCpu.textContent = msg.payload.cpu.toFixed(1) + '%';
+                        statMem.textContent = msg.payload.mem.toFixed(1) + '%';
+                        statDown.textContent = formatSpeed(msg.payload.net_down);
+                        statUp.textContent = formatSpeed(msg.payload.net_up);
+                        if (msg.payload.os_info) {
+                            globalOSInfo = msg.payload.os_info;
+                            document.querySelectorAll('.proc-os-info').forEach(el => {
+                                if (el.textContent === "Loading...") {
+                                    el.textContent = globalOSInfo;
+                                }
+                            });
+                        }
+                        break;
+                }
+            };
+        }
+
+        connectWebSocket();
+
+        function initTerminal() {
+            term = new Terminal({
+                cursorBlink: true,
+                convertEol: true,
+                fontSize: 13,
+                fontFamily: 'SF Mono, Menlo, monospace',
+                theme: { background: '#1c1c1c' }
+            });
+            fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(terminalContainer);
+            fitAddon.fit();
+        }
 
         let speedHistory = {}; 
         let globalOSInfo = "Loading...";
@@ -518,46 +587,6 @@
             if (hCircle) hCircle.style.opacity = 0;
         }
 
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            switch (msg.type) {
-                case "full_status":
-                    renderProcessList(msg.payload);
-                    break;
-                case "state_update":
-                    updateProcessCard(msg.payload);
-                    applyFilter();
-                    break;
-                case "log_line":
-                    appendLog(msg.id, msg.data);
-                    break;
-                case "full_log":
-                    renderFullLog(msg.id, msg.payload);
-                    break;
-                case "process_removed":
-                    const card = document.getElementById("card-" + msg.id);
-                    if (card) {
-                        card.remove();
-                        delete speedHistory[msg.id];
-                    }
-                    break;
-                case "system_stats":
-                    statCpu.textContent = msg.payload.cpu.toFixed(1) + '%';
-                    statMem.textContent = msg.payload.mem.toFixed(1) + '%';
-                    statDown.textContent = formatSpeed(msg.payload.net_down);
-                    statUp.textContent = formatSpeed(msg.payload.net_up);
-                    if (msg.payload.os_info) {
-                        globalOSInfo = msg.payload.os_info;
-                        document.querySelectorAll('.proc-os-info').forEach(el => {
-                            if (el.textContent === "Loading...") {
-                                el.textContent = globalOSInfo;
-                            }
-                        });
-                    }
-                    break;
-            }
-        };
-
         const processListEl = document.getElementById('processList');
         const addModal = document.getElementById('addModal');
         const logModal = document.getElementById('logModal');
@@ -565,7 +594,6 @@
         const addRegionInput = document.getElementById('addRegionInput');
         const addCommandButton = document.getElementById('addCommandButton');
         const logModalTitle = document.getElementById('logModalTitle');
-        const terminalLog = document.getElementById('terminal-log');
         const terminalInput = document.getElementById('terminalInput');
         const send2FAButton = document.getElementById('send2FAButton');
         
@@ -736,17 +764,17 @@
         }
 
         function appendLog(id, line) {
-            if (id === currentLogID) {
-                terminalLog.innerHTML += "<div></div>"; 
-                terminalLog.lastChild.textContent = line; 
-                terminalLog.scrollTop = terminalLog.scrollHeight;
+            if (id === currentLogID && term) {
+                term.writeln(line);
             }
         }
 
         function renderFullLog(id, lines) {
-            terminalLog.innerHTML = ""; 
-            if (lines) {
-                lines.forEach(line => appendLog(id, line));
+            if (term) {
+                term.clear();
+                if (lines) {
+                    lines.forEach(line => term.writeln(line));
+                }
             }
         }
 
@@ -788,6 +816,12 @@
                 send2FAButton.dataset.id = id;
                 terminalInput.dataset.id = id;
                 logModal.style.display = 'block';
+                if (!term) {
+                    initTerminal();
+                } else {
+                    term.clear();
+                    fitAddon.fit();
+                }
                 ws.send(JSON.stringify({ type: "get_logs", id: id }));
             }
             
@@ -860,9 +894,15 @@
                 document.getElementById(el.dataset.modal).style.display = 'none';
                 if (el.dataset.modal === 'logModal') {
                     currentLogID = null; 
-                    terminalLog.innerHTML = ""; 
+                    if (term) term.clear();
                 }
             };
+        });
+
+        window.addEventListener('resize', () => {
+            if (fitAddon) {
+                fitAddon.fit();
+            }
         });
 
     </script>
