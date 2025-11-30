@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -85,6 +86,7 @@ type ManagedProcess struct {
 	logBuffer       []string
 	restartCounter  int
 	RetryCount      int
+	ActiveConn      int64 `json:"activeConn"`
 }
 
 type SystemStats struct {
@@ -235,6 +237,7 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 		isRemoved:       false,
 		restartCounter:  0,
 		RetryCount:      0,
+		ActiveConn:      0,
 	}
 }
 
@@ -746,10 +749,17 @@ func (m *Manager) saveConfig_internal() {
 		log.Printf("!!! [SaveConfig BUG] 序列化 manager.json 失败: %v", err)
 		return
 	}
-	if err := os.WriteFile(m.ConfigPath, data, 0644); err != nil {
-		log.Printf("!!! [SaveConfig BUG] 写入 manager.json 失败: %v", err)
+
+	tmpFile := m.ConfigPath + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		log.Printf("!!! [SaveConfig] 写入临时配置文件失败: %v", err)
+		return
+	}
+
+	if err := os.Rename(tmpFile, m.ConfigPath); err != nil {
+		log.Printf("!!! [SaveConfig] 重命名配置文件失败: %v", err)
 	} else {
-		log.Printf("配置已保存到 %s", m.ConfigPath)
+		log.Printf("配置已原子保存到 %s", m.ConfigPath)
 	}
 }
 
@@ -1252,18 +1262,13 @@ func handleSignals(m *Manager) {
 	}
 }
 
-func copyProxyData(dst net.Conn, src net.Conn, wg *sync.WaitGroup) {
-	defer wg.Done()
-	bufPtr := bufferPool.Get().(*[]byte)
-	defer bufferPool.Put(bufPtr)
-	buf := *bufPtr
-	io.CopyBuffer(dst, src, buf)
-	dst.Close()
-}
-
-func handleTcpProxy(clientConn net.Conn, backendAddr string) {
+func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 	defer clientConn.Close()
 
+	atomic.AddInt64(&p.ActiveConn, 1)
+	defer atomic.AddInt64(&p.ActiveConn, -1)
+
+	backendAddr := "127.0.0.1:" + p.ID
 	backendConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
 	if err != nil {
 		log.Printf("[TCP-Proxy] 连接后端 %s 失败: %v", backendAddr, err)
@@ -1271,48 +1276,45 @@ func handleTcpProxy(clientConn net.Conn, backendAddr string) {
 	}
 	defer backendConn.Close()
 
+	if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+	if tcpConn, ok := backendConn.(*net.TCPConn); ok {
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go copyProxyData(backendConn, clientConn, &wg)
-	go copyProxyData(clientConn, backendConn, &wg)
+
+	go func() {
+		defer wg.Done()
+		io.Copy(backendConn, clientConn)
+		if conn, ok := backendConn.(*net.TCPConn); ok {
+			conn.CloseWrite()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		io.Copy(clientConn, backendConn)
+		if conn, ok := clientConn.(*net.TCPConn); ok {
+			conn.CloseWrite()
+		}
+	}()
+
 	wg.Wait()
 }
 
 func startRegionalTcpProxy(region string, port string, manager *Manager, ready chan struct{}) {
-	backends := make(map[string]bool)
-	var mu sync.RWMutex
-
-	updateCh := manager.SubscribeProxyUpdates()
-
-	manager.mutex.RLock()
-	for _, p := range manager.Processes {
-		if strings.EqualFold(p.Region, region) && p.ID != "" && p.State == StateRunning {
-			backends["127.0.0.1:"+p.ID] = true
-		}
-	}
-	manager.mutex.RUnlock()
-
-	go func() {
-		for u := range updateCh {
-			if strings.EqualFold(u.Region, region) && u.Type == "tcp" {
-				mu.Lock()
-				if u.IsRemove {
-					delete(backends, u.Addr)
-				} else {
-					backends[u.Addr] = true
-				}
-				mu.Unlock()
-			}
-		}
-	}()
-
 	l, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Printf("[TCP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
 		return
 	}
-	log.Printf("[TCP-%s] 解密负载均衡已启动 -> :%s (动态更新)", strings.ToUpper(region), port)
+	log.Printf("[TCP-%s] 解密负载均衡已启动 -> :%s (最小连接数策略)", strings.ToUpper(region), port)
 	close(ready)
 
 	for {
@@ -1321,19 +1323,23 @@ func startRegionalTcpProxy(region string, port string, manager *Manager, ready c
 			continue
 		}
 
-		var target string
-		mu.RLock()
-		if len(backends) > 0 {
-			keys := make([]string, 0, len(backends))
-			for k := range backends {
-				keys = append(keys, k)
-			}
-			target = keys[rand.Intn(len(keys))]
-		}
-		mu.RUnlock()
+		var bestTarget *ManagedProcess
+		minConns := int64(1<<63 - 1)
 
-		if target != "" {
-			go handleTcpProxy(c, target)
+		manager.mutex.RLock()
+		for _, p := range manager.Processes {
+			if strings.EqualFold(p.Region, region) && p.ID != "" && p.State == StateRunning {
+				currentConns := atomic.LoadInt64(&p.ActiveConn)
+				if currentConns < minConns {
+					minConns = currentConns
+					bestTarget = p
+				}
+			}
+		}
+		manager.mutex.RUnlock()
+
+		if bestTarget != nil {
+			go handleTcpProxy(c, bestTarget)
 		} else {
 			c.Close()
 		}
