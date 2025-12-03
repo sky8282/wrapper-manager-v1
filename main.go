@@ -613,25 +613,20 @@ func (p *ManagedProcess) runLoop() {
 
 		p.mutex.Lock()
 		p.RetryCount++
-		currentRetry := p.RetryCount
 		p.mutex.Unlock()
 
-		if currentRetry <= 5 {
-			delay := time.Duration(currentRetry) * 2 * time.Second
-			p.logToBuffer(fmt.Sprintf("--- 正在尝试第 %d/5 次自动重启，等待 %v ... ---", currentRetry, delay))
-			time.Sleep(delay)
-			globalManager.mutex.RLock()
-			_, exists := globalManager.Processes[p.ID]
-			globalManager.mutex.RUnlock()
+		delay := 2 * time.Second
+		p.logToBuffer(fmt.Sprintf("--- 正在尝试自动重启，等待 %v ... ---", delay))
+		time.Sleep(delay)
+		globalManager.mutex.RLock()
+		_, exists := globalManager.Processes[p.ID]
+		globalManager.mutex.RUnlock()
 
-			if exists {
-				p.logToBuffer("--- 正在重启... ---")
-				p.Start()
-			} else {
-				p.logToBuffer("--- 进程已被移除，取消重启 ---")
-			}
+		if exists {
+			p.logToBuffer("--- 正在重启... ---")
+			p.Start()
 		} else {
-			p.logToBuffer("--- !!! 连续失败超过 5 次，停止自动重启，请手动检查问题 !!! ---")
+			p.logToBuffer("--- 进程已被移除，取消重启 ---")
 		}
 	} else {
 		p.logToBuffer("--- 进程已停止 ---")
@@ -1204,9 +1199,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	globalHub.register <- conn
 	allProcs := globalManager.GetAllProcesses()
 	conn.WriteJSON(WSMessage{Type: "full_status", Payload: allProcs})
+	globalHub.register <- conn // Moved here to prevent concurrent write panic
 	for {
 		msgType, message, err := conn.ReadMessage()
 		if err != nil {
