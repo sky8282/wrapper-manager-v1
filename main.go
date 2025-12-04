@@ -26,6 +26,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	"gopkg.in/yaml.v3"
 )
 
 const MaxLogLines = 200
@@ -77,6 +78,7 @@ type ManagedProcess struct {
 	Speed           string       `json:"speed,omitempty"`
 	NetSpeed        string       `json:"netSpeed"`
 	prevBytes       uint64
+	ProxyBytesSent  uint64 `json:"-"`
 	isRemoved       bool
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -87,6 +89,19 @@ type ManagedProcess struct {
 	restartCounter  int
 	RetryCount      int
 	ActiveConn      int64 `json:"activeConn"`
+}
+
+type WriteCounter struct {
+	Total  *uint64
+	Writer io.Writer
+}
+
+func (wc *WriteCounter) Write(p []byte) (int, error) {
+	n, err := wc.Writer.Write(p)
+	if n > 0 {
+		atomic.AddUint64(wc.Total, uint64(n))
+	}
+	return n, err
 }
 
 type SystemStats struct {
@@ -103,6 +118,20 @@ type ProcessConfig struct {
 	Command         string   `json:"command"`
 	Args            []string `json:"args"`
 	RestartPatterns []string `json:"restartPatterns"`
+}
+
+type ServerConfig struct {
+	WebListen string `yaml:"web_listen"`
+}
+
+type WrapperConfig struct {
+	Path      string `yaml:"path"`
+	StateFile string `yaml:"state_file"`
+}
+
+type RegionConfig struct {
+	DecryptPort string `yaml:"decrypt-m3u8-port"`
+	GetPort     string `yaml:"get-m3u8-port"`
 }
 
 type Manager struct {
@@ -234,6 +263,7 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 		Speed:           "N/A",
 		NetSpeed:        "N/A",
 		prevBytes:       0,
+		ProxyBytesSent:  0,
 		isRemoved:       false,
 		restartCounter:  0,
 		RetryCount:      0,
@@ -1024,36 +1054,39 @@ func formatProcessSpeed(bytes uint64) string {
 }
 
 func getPortTrafficMap() map[string]uint64 {
-	out, err := exec.Command("ss", "-nitH").Output()
+	out, err := exec.Command("ss", "-ntH").Output()
 	if err != nil {
 		return nil
 	}
 	stats := make(map[string]uint64)
 	lines := strings.Split(string(out), "\n")
+	
 	var currentPort string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			fields := strings.Fields(line)
-			if len(fields) >= 4 {
+		
+		fields := strings.Fields(line)
+		if len(fields) >= 4 {
+			if strings.Contains(fields[3], ":") {
 				_, port, err := net.SplitHostPort(fields[3])
 				if err == nil {
 					currentPort = port
 				}
 			}
 		}
-		if strings.Contains(line, "bytes_acked:") {
-			parts := strings.Fields(line)
-			for _, part := range parts {
-				if strings.HasPrefix(part, "bytes_acked:") {
-					valStr := strings.TrimPrefix(part, "bytes_acked:")
-					val, _ := strconv.ParseUint(valStr, 10, 64)
-					if currentPort != "" {
-						stats[currentPort] += val
-					}
+
+		if idx := strings.Index(line, "bytes_acked:"); idx != -1 {
+			remaining := line[idx+len("bytes_acked:"):]
+			remaining = strings.TrimSpace(remaining)
+			parts := strings.Fields(remaining)
+			if len(parts) > 0 {
+				valStr := strings.TrimRight(parts[0], ",")
+				val, _ := strconv.ParseUint(valStr, 10, 64)
+				if currentPort != "" {
+					stats[currentPort] += val
 				}
 			}
 		}
@@ -1062,19 +1095,36 @@ func getPortTrafficMap() map[string]uint64 {
 }
 
 func monitorNetworkSpeed() {
+	_, err := exec.LookPath("ss")
+	if err != nil {
+		log.Println("警告: 系统未安装 'ss' (iproute2) 命令。如果未使用代理模式(-map)，解密速度将显示为0。")
+	}
+
 	for {
 		time.Sleep(1 * time.Second)
 		portStats := getPortTrafficMap()
+		
 		globalManager.mutex.RLock()
 		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
 		for _, p := range globalManager.Processes {
 			procs = append(procs, p)
 		}
 		globalManager.mutex.RUnlock()
+
 		for _, p := range procs {
 			p.mutex.Lock()
 			if p.State == StateRunning {
-				currBytes := portStats[p.ID]
+				proxyBytes := atomic.LoadUint64(&p.ProxyBytesSent)
+				var ssBytes uint64 = 0
+				if portStats != nil {
+					ssBytes = portStats[p.ID]
+				}
+
+				currBytes := proxyBytes
+				if ssBytes > currBytes {
+					currBytes = ssBytes
+				}
+
 				if p.prevBytes == 0 {
 					p.prevBytes = currBytes
 					p.NetSpeed = "0 B/s"
@@ -1309,16 +1359,17 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 
 	go func() {
 		defer wg.Done()
-		io.Copy(backendConn, clientConn)
-		if conn, ok := backendConn.(*net.TCPConn); ok {
+		counter := &WriteCounter{Total: &p.ProxyBytesSent, Writer: clientConn}
+		io.Copy(counter, backendConn)
+		if conn, ok := clientConn.(*net.TCPConn); ok {
 			conn.CloseWrite()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(clientConn, backendConn)
-		if conn, ok := clientConn.(*net.TCPConn); ok {
+		io.Copy(backendConn, clientConn)
+		if conn, ok := backendConn.(*net.TCPConn); ok {
 			conn.CloseWrite()
 		}
 	}()
@@ -1326,16 +1377,14 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 	wg.Wait()
 }
 
-func startRegionalTcpProxy(region string, port string, manager *Manager, ready chan struct{}) {
-	//l, err := net.Listen("tcp", ":"+port) //公网发布
-	// 强制监听本地回环地址 127.0.0.1
-    l, err := net.Listen("tcp", "127.0.0.1:"+port)
+func startRegionalTcpProxy(region string, addr string, manager *Manager, ready chan struct{}) {
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Printf("[TCP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
 		return
 	}
-	log.Printf("[TCP-%s] 解密负载均衡已启动 -> :%s (最小连接数策略)", strings.ToUpper(region), port)
+	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s (最小连接数策略)", strings.ToUpper(region), addr)
 	close(ready)
 
 	for {
@@ -1368,7 +1417,7 @@ func startRegionalTcpProxy(region string, port string, manager *Manager, ready c
 	}
 }
 
-func startRegionalHttpProxy(region string, port string, manager *Manager, ready chan struct{}) {
+func startRegionalHttpProxy(region string, addr string, manager *Manager, ready chan struct{}) {
 	var backends []string
 	var mu sync.RWMutex
 
@@ -1425,16 +1474,14 @@ func startRegionalHttpProxy(region string, port string, manager *Manager, ready 
 	}
 
 	proxy := &httputil.ReverseProxy{Director: director}
-	//l, err := net.Listen("tcp", ":"+port) //公网发布
-	// 强制监听本地回环地址 127.0.0.1
-    l, err := net.Listen("tcp", "127.0.0.1:"+port)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Printf("[HTTP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
 		return
 	}
 
-	log.Printf("[HTTP-%s] M3U8 负载均衡已启动 -> :%s (动态更新)", strings.ToUpper(region), port)
+	log.Printf("[HTTP-%s] M3U8 负载均衡已启动 -> %s (动态更新)", strings.ToUpper(region), addr)
 	close(ready)
 	server := &http.Server{
 		Handler: proxy,
@@ -1444,17 +1491,46 @@ func startRegionalHttpProxy(region string, port string, manager *Manager, ready 
 }
 
 func main() {
-	wrapperBin := flag.String("wrapper-bin", "./wrapper", "Wrapper路径")
-	port := flag.String("port", "8080", "Web UI 端口")
-	configJson := flag.String("config", "manager.json", "配置文件路径")
-	regionMap := flag.String("map", "", "区域端口映射, 格式: cn=8888:8889,jp=9998:9999")
+	configPath := flag.String("config", "config.yaml", "")
 	flag.Parse()
 
-	if _, err := os.Stat(*wrapperBin); os.IsNotExist(err) {
-		log.Fatalf("错误: 文件未找到: %s", *wrapperBin)
+	data, err := os.ReadFile(*configPath)
+	if err != nil {
+		log.Fatalf("Error reading config file: %v", err)
 	}
+
+	var rawMap map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &rawMap); err != nil {
+		log.Fatalf("Error parsing config file: %v", err)
+	}
+
+	var serverCfg ServerConfig
+	if node, ok := rawMap["server"]; ok {
+		node.Decode(&serverCfg)
+		delete(rawMap, "server")
+	}
+	if serverCfg.WebListen == "" {
+		serverCfg.WebListen = "0.0.0.0:8080"
+	}
+
+	var wrapperCfg WrapperConfig
+	if node, ok := rawMap["wrapper"]; ok {
+		node.Decode(&wrapperCfg)
+		delete(rawMap, "wrapper")
+	}
+	if wrapperCfg.Path == "" {
+		wrapperCfg.Path = "./wrapper"
+	}
+	if wrapperCfg.StateFile == "" {
+		wrapperCfg.StateFile = "manager.json"
+	}
+
+	if _, err := os.Stat(wrapperCfg.Path); os.IsNotExist(err) {
+		log.Fatalf("Error: Wrapper binary not found at %s", wrapperCfg.Path)
+	}
+
 	globalHub = newHub()
-	globalManager = NewManager(*wrapperBin, *configJson)
+	globalManager = NewManager(wrapperCfg.Path, wrapperCfg.StateFile)
 
 	globalManager.mutex.RLock()
 	for _, p := range globalManager.Processes {
@@ -1467,31 +1543,21 @@ func main() {
 	go monitorNetworkSpeed()
 	go handleSignals(globalManager)
 
-	if *regionMap != "" {
-		parts := strings.Split(*regionMap, ",")
-		for _, part := range parts {
-			kv := strings.Split(part, "=")
-			if len(kv) != 2 {
-				continue
-			}
-			region := strings.TrimSpace(kv[0])
-			ports := strings.Split(kv[1], ":")
-
-			if len(ports) >= 1 && ports[0] != "" {
+	for regionName, node := range rawMap {
+		var rCfg RegionConfig
+		if err := node.Decode(&rCfg); err == nil {
+			if rCfg.DecryptPort != "" {
 				ready := make(chan struct{})
-				go startRegionalTcpProxy(region, ports[0], globalManager, ready)
+				go startRegionalTcpProxy(regionName, rCfg.DecryptPort, globalManager, ready)
 				<-ready
 			}
-
-			if len(ports) >= 2 && ports[1] != "" {
+			if rCfg.GetPort != "" {
 				ready := make(chan struct{})
-				go startRegionalHttpProxy(region, ports[1], globalManager, ready)
+				go startRegionalHttpProxy(regionName, rCfg.GetPort, globalManager, ready)
 				<-ready
 			}
 			fmt.Println()
 		}
-	} else {
-		log.Println("提示: 未指定 -map 参数，负载均衡代理未启动")
 	}
 
 	http.HandleFunc("/ws", handleWebSocket)
@@ -1503,7 +1569,7 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
-		log.Println("停止中...")
+		log.Println("Stopping...")
 		all := globalManager.GetAllProcesses()
 		for _, p := range all {
 			p.Stop()
@@ -1512,8 +1578,8 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("WebUI: http://0.0.0.0:%s", *port)
-	if err := http.ListenAndServe(":"+*port, nil); err != nil {
+	log.Printf("WebUI: http://%s", serverCfg.WebListen)
+	if err := http.ListenAndServe(serverCfg.WebListen, nil); err != nil {
 		log.Fatal(err)
 	}
 }
