@@ -12,12 +12,13 @@
 * **自动重启**：进程意外退出或崩溃时自动尝试重启。
 * **配置持久化**：自动保存进程列表，重启管理器后自动启动列表里的进程。
 * **wrapper项目**：https://github.com/zhaarey/wrapper  或 https://github.com/WorldObservationLog/wrapper
-* **apple-music-downloader 多线程多区域项目分支**：https://github.com/sky8282/apple-music-downloader
+* **apple-music-downloader 原版**：https://github.com/zhaarey/apple-music-downloader
+* **apple-music-downloader 多线程多区域版本分支**：https://github.com/sky8282/apple-music-downloader
 
 ## 🛠️ 环境要求
-* Linux (推荐 Debian/Ubuntu)
+* Linux (Debian/Ubuntu)
 * Go 1.18+ (仅编译需要)
-* 目标 `wrapper` 可执行文件
+* 管理目标 `wrapper` 项目
 
 ## 🚀 部署与使用指南
 ### 目录结构如下：
