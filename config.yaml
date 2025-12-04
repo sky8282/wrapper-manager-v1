@@ -1,0 +1,17 @@
+# web界面设置
+server:
+  web_listen: "0.0.0.0:8080"
+
+# 解密程序和配置文件路径设置
+wrapper:
+  path: "./wrapper"
+  state_file: "manager.json"
+
+# 账号区域设置
+us:
+  decrypt-m3u8-port: "127.0.0.1:8888"
+  get-m3u8-port: "127.0.0.1:8889"
+
+jp:
+  decrypt-m3u8-port: "127.0.0.1:9998"
+  get-m3u8-port: "127.0.0.1:9999"
