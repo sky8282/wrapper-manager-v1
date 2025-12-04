@@ -671,12 +671,12 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	checkAddr := "127.0.0.1:" + port
 	initialCheckOK := false
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 36; i++ { 
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(5 * time.Second):
-			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
+			conn, err := net.DialTimeout("tcp", checkAddr, 3*time.Second)
 			if err == nil {
 				conn.Close()
 				p.logToBuffer(fmt.Sprintf("\033[32m--- 健康检查通过: %s ---\033[0m", checkAddr))
@@ -696,32 +696,55 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	}
 
 	if !initialCheckOK {
-		p.logToBuffer(fmt.Sprintf("!!! 启动失败: 100秒内健康检查未通过 %s", checkAddr))
+		p.logToBuffer(fmt.Sprintf("!!! 启动失败: 3分钟内健康检查未通过 %s", checkAddr))
 		p.forceKill()
 		p.setState(StateFailed)
 		return
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	const checkInterval = 5 * time.Second
+	const toleranceDuration = 20 * time.Minute 
+	const maxRetries = int(toleranceDuration / checkInterval)
+
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
+
+	failCount := 0
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
+			conn, err := net.DialTimeout("tcp", checkAddr, 3*time.Second)
+			
 			if err != nil {
 				p.mutex.Lock()
 				state := p.State
 				p.mutex.Unlock()
+				
 				if state == StateRunning {
-					p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 无法连接到 %s", checkAddr))
-					p.forceKill()
-					p.setState(StateFailed)
-					return
+					failCount++
+					
+					if failCount >= maxRetries {
+						p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 连续 %d 次无法连接 (已等待 20 分钟)，判定进程彻底失去响应，执行重启。", failCount))
+						p.forceKill()
+						p.setState(StateFailed)
+						return
+					} else {
+						if failCount == 1 || failCount%12 == 0 {
+							p.logToBuffer(fmt.Sprintf("! [高负载保护] 健康检查未通过 (%d/%d): 进程可能正在解密大文件，将在 %v 后超时...", 
+								failCount, maxRetries, time.Duration(maxRetries-failCount)*checkInterval))
+						}
+					}
 				}
 			} else {
 				conn.Close()
+				
+				if failCount > 0 {
+					p.logToBuffer(fmt.Sprintf("--- 进程负载已恢复 (曾连续阻塞 %d 次检测) ---", failCount))
+					failCount = 0
+				}
 				p.mutex.Lock()
 				state := p.State
 				p.mutex.Unlock()
