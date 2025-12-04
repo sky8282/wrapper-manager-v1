@@ -468,9 +468,9 @@ func setupInstance(region string, wrapperPath string) (string, string, error) {
 
 func (p *ManagedProcess) runLoop() {
 	p.setState(StateStarting)
-	p.logToBuffer(fmt.Sprintf("--- 正在启动: %s %s (Region: %s) ---", p.WrapperPath, strings.Join(p.Args, " "), p.Region))
+	p.logToBuffer(fmt.Sprintf("\033[33m--- 正在启动: %s %s (Region: %s) ---\033[0m", p.WrapperPath, strings.Join(p.Args, " "), p.Region))
 	if len(p.RestartPatterns) > 0 {
-		p.logToBuffer(fmt.Sprintf("--- 监控重启关键词: %v ---", p.RestartPatterns))
+		p.logToBuffer(fmt.Sprintf("\033[33m--- 监控重启关键词: %v ---\033[0m", p.RestartPatterns))
 	}
 
 	instanceDir, binCommand, err := setupInstance(p.Region, p.WrapperPath)
@@ -479,7 +479,7 @@ func (p *ManagedProcess) runLoop() {
 		p.setState(StateFailed)
 		return
 	}
-	p.logToBuffer(fmt.Sprintf("--- 实例环境已就绪: %s ---", instanceDir))
+	p.logToBuffer(fmt.Sprintf("\033[32m--- 实例环境已就绪: %s ---\033[0m", instanceDir))
 	processStartTime := time.Now()
 	p.mutex.Lock()
 	p.cmd = exec.CommandContext(p.ctx, binCommand, p.Args...)
@@ -518,79 +518,78 @@ func (p *ManagedProcess) runLoop() {
 		}
 
 		func() {
-			buf := make([]byte, 4096)
+			scanner := bufio.NewReader(ptmx)
 			p.restartCounter = 0
 			var firstPatternTime time.Time
 
 			for {
-				n, err := ptmx.Read(buf)
-				if n > 0 {
-					line := string(buf[:n])
-					lines := strings.Split(line, "\n")
-					for _, l := range lines {
-						if strings.TrimSpace(l) == "" {
-							continue
+				line, err := scanner.ReadString('\n')
+				if len(line) > 0 {
+					l := strings.TrimRight(line, "\r\n")
+					if strings.TrimSpace(l) == "" {
+						if err == io.EOF {
+							break
+						}
+						continue
+					}
+
+					isWarning := strings.Contains(l, "WARNING:")
+
+					matched := false
+					for _, pattern := range p.RestartPatterns {
+						if strings.Contains(l, pattern) {
+							matched = true
+							break
+						}
+					}
+
+					if matched {
+						now := time.Now()
+						if p.restartCounter == 0 || now.Sub(firstPatternTime) > 60*time.Second {
+							p.restartCounter = 1
+							firstPatternTime = now
+						} else {
+							p.restartCounter++
 						}
 
-						isWarning := strings.Contains(l, "WARNING:")
-
-						matched := false
-						for _, pattern := range p.RestartPatterns {
-							if strings.Contains(l, pattern) {
-								matched = true
-								break
+						if p.restartCounter >= 3 {
+							p.logToBuffer(fmt.Sprintf("!!! [监控] 60秒内检测到3次异常，触发重启: %s", strings.TrimSpace(l)))
+							p.mutex.Lock()
+							if p.cmd != nil && p.cmd.Process != nil {
+								p.cmd.Process.Kill()
 							}
+							p.mutex.Unlock()
+							p.restartCounter = 0
 						}
+					}
 
-						if matched {
-							now := time.Now()
-							if p.restartCounter == 0 || now.Sub(firstPatternTime) > 60*time.Second {
-								p.restartCounter = 1
-								firstPatternTime = now
-							} else {
-								p.restartCounter++
-							}
+					if isWarning {
+						if err == io.EOF {
+							break
+						}
+						continue
+					}
 
-							if p.restartCounter >= 3 {
-								p.logToBuffer(fmt.Sprintf("!!! [监控] 60秒内检测到3次异常，触发重启: %s", strings.TrimSpace(l)))
-								p.mutex.Lock()
-								if p.cmd != nil && p.cmd.Process != nil {
-									p.cmd.Process.Kill()
-								}
+					p.logToBuffer(l)
+					var status WrapperStatus
+					if err := json.Unmarshal([]byte(l), &status); err == nil {
+						if status.Speed != "" {
+							p.mutex.Lock()
+							if p.Speed != status.Speed {
+								p.Speed = status.Speed
+								payload := *p
 								p.mutex.Unlock()
-								p.restartCounter = 0
-							}
-						}
-
-						if isWarning {
-							continue
-						}
-
-						p.logToBuffer(l)
-						var status WrapperStatus
-						if err := json.Unmarshal([]byte(l), &status); err == nil {
-							if status.Speed != "" {
-								p.mutex.Lock()
-								if p.Speed != status.Speed {
-									p.Speed = status.Speed
-									payload := *p
-									p.mutex.Unlock()
-									globalHub.BroadcastStateUpdate(&payload)
-								} else {
-									p.mutex.Unlock()
-								}
+								globalHub.BroadcastStateUpdate(&payload)
+							} else {
+								p.mutex.Unlock()
 							}
 						}
 					}
 				}
 				if err != nil {
-					if err == io.EOF {
-						break
+					if err != io.EOF && p.ctx.Err() == nil {
+						p.logToBuffer(fmt.Sprintf("!!! PTY 读取错误: %v", err))
 					}
-					if p.ctx.Err() != nil {
-						break
-					}
-					p.logToBuffer(fmt.Sprintf("!!! PTY 读取错误: %v", err))
 					break
 				}
 			}
@@ -602,7 +601,7 @@ func (p *ManagedProcess) runLoop() {
 	}
 
 	if p.ctx.Err() == nil {
-		p.logToBuffer("--- 进程意外退出 (或被监控触发重启) ---")
+		p.logToBuffer("\033[31m--- 进程意外退出 (或被监控触发重启) ---\033[0m")
 		p.setState(StateFailed)
 
 		if time.Since(processStartTime) > 60*time.Second {
@@ -616,14 +615,14 @@ func (p *ManagedProcess) runLoop() {
 		p.mutex.Unlock()
 
 		delay := 2 * time.Second
-		p.logToBuffer(fmt.Sprintf("--- 正在尝试自动重启，等待 %v ... ---", delay))
+		p.logToBuffer(fmt.Sprintf("\033[31m--- 正在尝试自动重启，等待 %v ... ---\033[0m", delay))
 		time.Sleep(delay)
 		globalManager.mutex.RLock()
 		_, exists := globalManager.Processes[p.ID]
 		globalManager.mutex.RUnlock()
 
 		if exists {
-			p.logToBuffer("--- 正在重启... ---")
+			p.logToBuffer("\033[33m--- 正在重启... ---\033[0m")
 			p.Start()
 		} else {
 			p.logToBuffer("--- 进程已被移除，取消重启 ---")
@@ -650,7 +649,7 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 			conn, err := net.DialTimeout("tcp", checkAddr, 2*time.Second)
 			if err == nil {
 				conn.Close()
-				p.logToBuffer(fmt.Sprintf("--- 健康检查通过: %s ---", checkAddr))
+				p.logToBuffer(fmt.Sprintf("\033[32m--- 健康检查通过: %s ---\033[0m", checkAddr))
 				p.mutex.Lock()
 				if p.StartTime.IsZero() {
 					p.StartTime = time.Now()
@@ -971,7 +970,10 @@ func readNetStats() (rx, tx uint64) {
 				continue
 			}
 			r, _ := strconv.ParseUint(cleanParts[1], 10, 64)
-			t, _ := strconv.ParseUint(cleanParts[9], 10, 64)
+			var t uint64
+			if len(cleanParts) > 9 {
+				t, _ = strconv.ParseUint(cleanParts[9], 10, 64)
+			}
 			rx += r
 			tx += t
 		}
@@ -1098,9 +1100,15 @@ func monitorNetworkSpeed() {
 	}
 }
 
+type UnicastReq struct {
+	Conn *websocket.Conn
+	Msg  []byte
+}
+
 type Hub struct {
 	clients    map[*websocket.Conn]bool
 	broadcast  chan []byte
+	unicast    chan UnicastReq
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	mutex      sync.Mutex
@@ -1110,10 +1118,19 @@ func newHub() *Hub {
 	return &Hub{
 		clients:    make(map[*websocket.Conn]bool),
 		broadcast:  make(chan []byte),
+		unicast:    make(chan UnicastReq),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
 	}
 }
+
+func (h *Hub) SendJSON(conn *websocket.Conn, v interface{}) {
+	data, err := json.Marshal(v)
+	if err == nil {
+		h.unicast <- UnicastReq{Conn: conn, Msg: data}
+	}
+}
+
 func (h *Hub) run() {
 	for {
 		select {
@@ -1134,6 +1151,15 @@ func (h *Hub) run() {
 				if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
 					log.Printf("WebSocket 写入错误: %v", err)
 					h.unregister <- client
+				}
+			}
+			h.mutex.Unlock()
+		case req := <-h.unicast:
+			h.mutex.Lock()
+			if _, ok := h.clients[req.Conn]; ok {
+				if err := req.Conn.WriteMessage(websocket.TextMessage, req.Msg); err != nil {
+					log.Printf("WebSocket 单播错误: %v", err)
+					h.unregister <- req.Conn
 				}
 			}
 			h.mutex.Unlock()
@@ -1201,7 +1227,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	allProcs := globalManager.GetAllProcesses()
 	conn.WriteJSON(WSMessage{Type: "full_status", Payload: allProcs})
-	globalHub.register <- conn // Moved here to prevent concurrent write panic
+	globalHub.register <- conn
 	for {
 		msgType, message, err := conn.ReadMessage()
 		if err != nil {
@@ -1220,7 +1246,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "start_process":
 			port := getPortFromArgs(msg.Args, "-D")
 			if port == "" {
-				conn.WriteJSON(WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -D <port>"})
+				globalHub.SendJSON(conn, WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -D <port>"})
 				continue
 			}
 			region := msg.Region
@@ -1240,7 +1266,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "get_logs":
 			p := globalManager.GetProcess(msg.ID)
 			if p != nil {
-				conn.WriteJSON(WSMessage{Type: "full_log", ID: p.ID, Payload: p.logBuffer})
+				globalHub.SendJSON(conn, WSMessage{Type: "full_log", ID: p.ID, Payload: p.logBuffer})
 			}
 		}
 	}
@@ -1259,8 +1285,6 @@ func handleSignals(m *Manager) {
 
 func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 	defer clientConn.Close()
-
-	atomic.AddInt64(&p.ActiveConn, 1)
 	defer atomic.AddInt64(&p.ActiveConn, -1)
 
 	backendAddr := "127.0.0.1:" + p.ID
@@ -1303,7 +1327,9 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 }
 
 func startRegionalTcpProxy(region string, port string, manager *Manager, ready chan struct{}) {
-	l, err := net.Listen("tcp", ":"+port)
+	//l, err := net.Listen("tcp", ":"+port) //公网发布
+	// 强制监听本地回环地址 127.0.0.1
+    l, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		log.Printf("[TCP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
@@ -1334,6 +1360,7 @@ func startRegionalTcpProxy(region string, port string, manager *Manager, ready c
 		manager.mutex.RUnlock()
 
 		if bestTarget != nil {
+			atomic.AddInt64(&bestTarget.ActiveConn, 1)
 			go handleTcpProxy(c, bestTarget)
 		} else {
 			c.Close()
@@ -1398,7 +1425,9 @@ func startRegionalHttpProxy(region string, port string, manager *Manager, ready 
 	}
 
 	proxy := &httputil.ReverseProxy{Director: director}
-	l, err := net.Listen("tcp", ":"+port)
+	//l, err := net.Listen("tcp", ":"+port) //公网发布
+	// 强制监听本地回环地址 127.0.0.1
+    l, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		log.Printf("[HTTP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
