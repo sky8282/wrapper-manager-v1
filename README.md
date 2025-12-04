@@ -24,8 +24,9 @@
 ```text
 /root/wrapper/
 ├── main.go           # 源码 (或者编译好的 wrapper-manager)
+├── config.yaml       # wrapper-manager 配置文件
 ├── index.html        # 前端界面
-├── wrapper           # wrapper 二进制程序 (必须存在)
+├── wrapper           # wrapper 二进制程序
 └── rootfs            # wrapper 相关的文件夹
 ```
 ### 初始化 Go 模块：
@@ -44,22 +45,11 @@ go build -o wrapper-manager .
 ```text
 chmod +x wrapper-manager
 ```
-
-### 启动参数说明:
-* --wrapper-bin: 指定被管理的二进制文件路径（默认为 ./wrapper）。
-* --port: Web 界面监听端口（默认为 8080）。
-* --config: 配置文件路径（默认为 manager.json，会自动创建）。
-* --map: 启动 （账号区域） 和 对应的端口 （解密端口:m3u8端口）。
-
 ### 使用以下命令启动管理器：
-* 下方代码含义：cn= 账号区域，8888= 解密端口，8889= m3u8端口
-* 如要新增us区域，格式就这样：`./wrapper-manager -map "cn=8888:8889,jp=9998:9999,us=10000:10001"`
-* 请根据账号区域进行修改并启动：
+* 请根据账号区域等进行修改 config.yaml 参数并启动：
 ```text
-./wrapper-manager -map "cn=8888:8889,jp=9998:9999"
-```
-* 下载器的 config.yaml里 decrypt-m3u8-port 填入ip:8888 和 get-m3u8-port 填入ip:8889 就可以实现负载均衡。
- 
+./wrapper-manager
+``` 
 ### 在web界面添加新进程：
 * 点击仪表盘上的 "+ 添加新进程" 卡片。
 * 输入或选择账号对应的区域。
