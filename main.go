@@ -30,11 +30,7 @@ import (
 )
 
 const MaxLogLines = 200
-
-var GlobalRestartPatterns = []string{
-	"KDCanProcessCKC",
-}
-
+var GlobalRestartPatterns []string
 var bufferPool = sync.Pool{
 	New: func() interface{} {
 		b := make([]byte, 128*1024)
@@ -125,8 +121,9 @@ type ServerConfig struct {
 }
 
 type WrapperConfig struct {
-	Path      string `yaml:"path"`
-	StateFile string `yaml:"state_file"`
+	Path            string   `yaml:"path"`
+	StateFile       string   `yaml:"state_file"`
+	RestartPatterns []string `yaml:"restart_patterns"`
 }
 
 type RegionConfig struct {
@@ -276,7 +273,7 @@ func (p *ManagedProcess) Start() {
 }
 
 func (p *ManagedProcess) Stop() {
-	p.logToBuffer("--- 收到停止命令 ---")
+	p.logToBuffer("\033[33m--- 收到停止命令 ---\033[0m")
 	p.cancel()
 	p.mutex.Lock()
 	pidToKill := 0
@@ -286,9 +283,9 @@ func (p *ManagedProcess) Stop() {
 	p.mutex.Unlock()
 	if pidToKill != 0 {
 		if err := syscall.Kill(-pidToKill, syscall.SIGKILL); err != nil {
-			p.logToBuffer(fmt.Sprintf("进程组 %d 终止异常: %v", pidToKill, err))
+			p.logToBuffer(fmt.Sprintf("\033[33m进程组 %d 终止异常: %v\033[0m", pidToKill, err))
 		} else {
-			p.logToBuffer(fmt.Sprintf("--- 进程组 %d 已终止 (SIGKILL) ---", pidToKill))
+			p.logToBuffer(fmt.Sprintf("\033[33m--- 进程组 %d 已终止 (SIGKILL) ---\033[0m", pidToKill))
 		}
 	}
 }
@@ -505,7 +502,7 @@ func (p *ManagedProcess) runLoop() {
 
 	instanceDir, binCommand, err := setupInstance(p.Region, p.WrapperPath)
 	if err != nil {
-		p.logToBuffer(fmt.Sprintf("!!! 实例环境创建失败: %v", err))
+		p.logToBuffer(fmt.Sprintf("\033[31m!!! 实例环境创建失败: %v\033[0m", err))
 		p.setState(StateFailed)
 		return
 	}
@@ -517,7 +514,7 @@ func (p *ManagedProcess) runLoop() {
 	p.mutex.Unlock()
 	ptmx, err := pty.Start(p.cmd)
 	if err != nil {
-		p.logToBuffer(fmt.Sprintf("!!! PTY 启动失败: %v", err))
+		p.logToBuffer(fmt.Sprintf("\033[31m!!! PTY 启动失败: %v\033[0m", err))
 		p.setState(StateFailed)
 	} else {
 		p.ptmx = ptmx
@@ -541,11 +538,13 @@ func (p *ManagedProcess) runLoop() {
 
 		checkPort := p.getCheckPort()
 		if checkPort == "" {
-			p.logToBuffer("!!! 提示: 无法从参数中找到 -D 端口，健康检查已禁用")
+			p.logToBuffer("\033[33m!!! 提示: 无法从参数中找到 -D 端口，健康检查已禁用\033[0m")
 			p.setState(StateRunning)
 		} else {
 			go p.healthCheck(healthCtx, checkPort)
 		}
+
+		var isCKCError bool = false
 
 		func() {
 			scanner := bufio.NewReader(ptmx)
@@ -561,6 +560,11 @@ func (p *ManagedProcess) runLoop() {
 							break
 						}
 						continue
+					}
+
+					if strings.Contains(l, "SVError: Invalid CKC error") {
+						isCKCError = true
+						p.logToBuffer("\033[33m!!! 检测到 CKC 错误，下一次重启将触发冷却保护\033[0m")
 					}
 
 					isWarning := strings.Contains(l, "WARNING:")
@@ -583,7 +587,7 @@ func (p *ManagedProcess) runLoop() {
 						}
 
 						if p.restartCounter >= 3 {
-							p.logToBuffer(fmt.Sprintf("!!! [监控] 60秒内检测到3次异常，触发重启: %s", strings.TrimSpace(l)))
+							p.logToBuffer(fmt.Sprintf("\033[31m!!! [监控] 60秒内检测到3次异常，触发重启: %s\033[0m", strings.TrimSpace(l)))
 							p.mutex.Lock()
 							if p.cmd != nil && p.cmd.Process != nil {
 								p.cmd.Process.Kill()
@@ -618,7 +622,7 @@ func (p *ManagedProcess) runLoop() {
 				}
 				if err != nil {
 					if err != io.EOF && p.ctx.Err() == nil {
-						p.logToBuffer(fmt.Sprintf("!!! PTY 读取错误: %v", err))
+						p.logToBuffer(fmt.Sprintf("\033[31m!!! PTY 读取错误: %v\033[0m", err))
 					}
 					break
 				}
@@ -628,38 +632,46 @@ func (p *ManagedProcess) runLoop() {
 		p.cmd.Wait()
 		healthCancel()
 		p.ptmx = nil
-	}
 
-	if p.ctx.Err() == nil {
-		p.logToBuffer("\033[31m--- 进程意外退出 (或被监控触发重启) ---\033[0m")
-		p.setState(StateFailed)
+		if p.ctx.Err() == nil {
+			p.logToBuffer("\033[31m--- 进程意外退出 (或被监控触发重启) ---\033[0m")
+			p.setState(StateFailed)
 
-		if time.Since(processStartTime) > 60*time.Second {
+			if time.Since(processStartTime) > 60*time.Second {
+				p.mutex.Lock()
+				p.RetryCount = 0
+				p.mutex.Unlock()
+			}
+
 			p.mutex.Lock()
-			p.RetryCount = 0
+			p.RetryCount++
 			p.mutex.Unlock()
-		}
 
-		p.mutex.Lock()
-		p.RetryCount++
-		p.mutex.Unlock()
+			delay := 2 * time.Second
 
-		delay := 2 * time.Second
-		p.logToBuffer(fmt.Sprintf("\033[31m--- 正在尝试自动重启，等待 %v ... ---\033[0m", delay))
-		time.Sleep(delay)
-		globalManager.mutex.RLock()
-		_, exists := globalManager.Processes[p.ID]
-		globalManager.mutex.RUnlock()
+			if isCKCError {
+				delay = 30 * time.Second
+				p.logToBuffer(fmt.Sprintf("\033[33m--- 触发 CKC 错误保护，进入冷却模式，等待 %v 后重启... ---\033[0m", delay))
+			} else {
+				p.logToBuffer(fmt.Sprintf("\033[33m--- 正在尝试自动重启，等待 %v ... ---\033[0m", delay))
+			}
 
-		if exists {
-			p.logToBuffer("\033[33m--- 正在重启... ---\033[0m")
-			p.Start()
+			time.Sleep(delay)
+			
+			globalManager.mutex.RLock()
+			_, exists := globalManager.Processes[p.ID]
+			globalManager.mutex.RUnlock()
+
+			if exists {
+				p.logToBuffer("\033[33m--- 正在重启... ---\033[0m")
+				p.Start()
+			} else {
+				p.logToBuffer("\033[33m--- 进程已被移除，取消重启 ---\033[0m")
+			}
 		} else {
-			p.logToBuffer("--- 进程已被移除，取消重启 ---")
+			p.logToBuffer("\033[33m--- 进程已停止 ---\033[0m")
+			p.setState(StateStopped)
 		}
-	} else {
-		p.logToBuffer("--- 进程已停止 ---")
-		p.setState(StateStopped)
 	}
 }
 
@@ -671,7 +683,7 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	checkAddr := "127.0.0.1:" + port
 	initialCheckOK := false
 
-	for i := 0; i < 36; i++ { 
+	for i := 0; i < 36; i++ {
 		select {
 		case <-ctx.Done():
 			return
@@ -696,14 +708,14 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	}
 
 	if !initialCheckOK {
-		p.logToBuffer(fmt.Sprintf("!!! 启动失败: 3分钟内健康检查未通过 %s", checkAddr))
+		p.logToBuffer(fmt.Sprintf("\033[31m!!! 启动失败: 3分钟内健康检查未通过 %s\033[0m", checkAddr))
 		p.forceKill()
 		p.setState(StateFailed)
 		return
 	}
 
 	const checkInterval = 5 * time.Second
-	const toleranceDuration = 20 * time.Minute 
+	const toleranceDuration = 20 * time.Minute
 	const maxRetries = int(toleranceDuration / checkInterval)
 
 	ticker := time.NewTicker(checkInterval)
@@ -717,39 +729,41 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 			return
 		case <-ticker.C:
 			conn, err := net.DialTimeout("tcp", checkAddr, 3*time.Second)
-			
+
 			if err != nil {
 				p.mutex.Lock()
 				state := p.State
 				p.mutex.Unlock()
-				
+
 				if state == StateRunning {
 					failCount++
-					
+
 					if failCount >= maxRetries {
-						p.logToBuffer(fmt.Sprintf("!!! 健康检查失败: 连续 %d 次无法连接 (已等待 20 分钟)，判定进程彻底失去响应，执行重启。", failCount))
+						p.logToBuffer(fmt.Sprintf("\033[31m!!! 健康检查失败: 连续 %d 次无法连接 (已等待 20 分钟)，判定进程彻底失去响应，执行重启。\033[0m", failCount))
 						p.forceKill()
 						p.setState(StateFailed)
 						return
 					} else {
 						if failCount == 1 || failCount%12 == 0 {
-							p.logToBuffer(fmt.Sprintf("! [高负载保护] 健康检查未通过 (%d/%d): 进程可能正在解密大文件，将在 %v 后超时...", 
+							p.logToBuffer(fmt.Sprintf("\033[33m! [高负载保护] 健康检查未通过 (%d/%d): 进程可能正在解密大文件，将在 %v 后超时...\033[0m",
 								failCount, maxRetries, time.Duration(maxRetries-failCount)*checkInterval))
 						}
 					}
 				}
 			} else {
 				conn.Close()
-				
+
 				if failCount > 0 {
-					p.logToBuffer(fmt.Sprintf("--- 进程负载已恢复 (曾连续阻塞 %d 次检测) ---", failCount))
+					p.logToBuffer(fmt.Sprintf("\033[32m--- 进程负载已恢复 (曾连续阻塞 %d 次检测) ---\033[0m", failCount))
 					failCount = 0
 				}
+
 				p.mutex.Lock()
 				state := p.State
 				p.mutex.Unlock()
+
 				if state != StateRunning && state != StateStopped {
-					p.logToBuffer(fmt.Sprintf("--- 健康检查恢复: %s ---", checkAddr))
+					p.logToBuffer(fmt.Sprintf("\033[32m--- 健康检查恢复: %s ---\033[0m", checkAddr))
 					p.mutex.Lock()
 					if p.StartTime.IsZero() {
 						p.StartTime = time.Now()
@@ -772,7 +786,7 @@ func (p *ManagedProcess) forceKill() {
 		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
 			syscall.Kill(pid, syscall.SIGKILL)
 		}
-		p.logToBuffer(fmt.Sprintf("--- [健康检查] 已强制杀死进程组 %d ---", pid))
+		p.logToBuffer(fmt.Sprintf("\033[31m--- [健康检查] 已强制杀死进程组 %d ---\033[0m", pid))
 	}
 
 	if ptmx != nil {
@@ -1083,14 +1097,14 @@ func getPortTrafficMap() map[string]uint64 {
 	}
 	stats := make(map[string]uint64)
 	lines := strings.Split(string(out), "\n")
-	
+
 	var currentPort string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		
+
 		fields := strings.Fields(line)
 		if len(fields) >= 4 {
 			if strings.Contains(fields[3], ":") {
@@ -1126,7 +1140,7 @@ func monitorNetworkSpeed() {
 	for {
 		time.Sleep(1 * time.Second)
 		portStats := getPortTrafficMap()
-		
+
 		globalManager.mutex.RLock()
 		procs := make([]*ManagedProcess, 0, len(globalManager.Processes))
 		for _, p := range globalManager.Processes {
@@ -1546,6 +1560,10 @@ func main() {
 	}
 	if wrapperCfg.StateFile == "" {
 		wrapperCfg.StateFile = "manager.json"
+	}
+
+	if len(wrapperCfg.RestartPatterns) > 0 {
+		GlobalRestartPatterns = wrapperCfg.RestartPatterns
 	}
 
 	if _, err := os.Stat(wrapperCfg.Path); os.IsNotExist(err) {
