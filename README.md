@@ -57,3 +57,29 @@ chmod +x wrapper-manager
 * 输入完整的启动命令，如：`-H 127.0.0.1 -D 10020 -M 10021` 或 `-H 127.0.0.1 -D 10020 -M 10021 -L 邮箱:密码，或 其他启动参数`。
 * 在日志里查看并发送 `2fa` 验证码。
 * 注意：命令中必须包含 -D <端口> 参数，管理器将使用该端口作为进程的唯一 ID 进行识别和健康检查。
+* 仅个人理解的解密流程：
+
+```mermaid
+flowchart TD
+    A["Apple Music"] --> B["Content ID<br>(歌曲ID)"]
+    B --> C["Authorization Token (AT)<br>从 Apple 服务器获取<br>有效期通常几小时到1天"]
+    C --> D["KDProcessPersistentKeyWithAT<br>AT + Content ID<br>生成 Persistent Key<br>用于离线播放(解密)"]
+
+    D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)正常进行"]
+
+    D -->|"失败:<br>出现类似 42829 的警报"| F["Persistent Key Error -42829<br>密钥无效（过期 / AT 失效）<br>类似报警：<br>catched an exception: FairPlay error.<br>KDProcessPersistentKeyWithAT status: -42829"]
+
+    F --> G["自动刷新 AT<br>网络不稳等可能同时触发<br>KDCanProcessCKC 报警"]
+
+    G --> H["使用新 AT 重新调用<br>KDProcessPersistentKeyWithAT<br>生成新的 Persistent Key"]
+
+    H --> NormalPlay
+
+    style A fill:#2c2c2c,stroke:#007AFF,color:#fff
+    style B fill:#1c1c1e,stroke:#007AFF,color:#fff
+    style C fill:#1c1c1e,stroke:#007AFF,color:#fff
+    style D fill:#1c1c1e,stroke:#007AFF,color:#fff
+    style NormalPlay fill:#007AFF,stroke:#007AFF,color:#fff
+    style F fill:#8B0000,stroke:#FF3B30,color:#fff
+    style G fill:#1c1c1e,stroke:#FF3B30,color:#fff
+    style H fill:#1c1c1e,stroke:#FF9F0A,color:#fff
