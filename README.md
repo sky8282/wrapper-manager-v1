@@ -65,7 +65,7 @@ flowchart TD
     B --> C["Authorization Token (AT)<br>从 Apple 服务器获取<br>有效期通常几小时到1天"]
     C --> D["KDProcessPersistentKeyWithAT<br>AT + Content ID<br>生成 Persistent Key<br>用于离线播放(解密)"]
 
-    D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)正常进行"]
+    D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)运行正常"]
 
     D -->|"失败:<br>出现类似 42829 的警报"| F["Persistent Key Error -42829<br>密钥无效（过期 / AT 失效）<br>类似报警：<br>catched an exception: FairPlay error.<br>KDProcessPersistentKeyWithAT status: -42829"]
 
