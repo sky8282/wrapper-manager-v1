@@ -1,58 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="light-mode">
-<head>
-    <meta charset="UTF-8">
-    <title>Wrapper 管理器</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
-    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
-    <style>
-        :root {
-            --bg-color: #f4f6f8;
-            --card-bg: #ffffff;
-            --text-main: #2c3e50;
-            --text-sub: #7f8c8d;
-            --border-color: #ecf0f1;
-            --primary: #3498db;
-            --success: #2ecc71;
-            --warning: #f1c40f;
-            --danger: #e74c3c;
-            --code-bg: #f8f9fa;
-            --hover-yellow: #f1c40f; 
-            --btn-text-color: #000000;
-            --btn-start-bg: rgba(46, 204, 113, 0.4);
-            --btn-restart-bg: rgba(241, 196, 15, 0.4);
-            --btn-remove-bg: rgba(231, 76, 60, 0.2);
-            --log-bg: #f8f9fa;
-            --log-fg: #2c3e50;
-        }
 
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #1a1b1e;
-                --card-bg: #25262b;
-                --text-main: #e9ecef;
-                --text-sub: #909296;
-                --border-color: #2c2e33;
-                --code-bg: #2c2e33;
-                --btn-text-color: #FFFFFF; 
-                --log-bg: #1c1c1c; 
-                --log-fg: #f8f8f2; 
-            }
-        }
-        
-        html.light-mode {
-            --bg-color: #f4f6f8;
-            --card-bg: #ffffff;
-            --text-main: #2c3e50;
-            --text-sub: #7f8c8d;
-            --border-color: #ecf0f1;
-            --code-bg: #f8f9fa;
-            --btn-text-color: #000000;
-            --log-bg: #1c1c1c;
-            --log-fg: #f8f8f2;
-        }
-        html.dark-mode {
+<html lang="zh-CN" class="light-mode"> <head> <meta charset="UTF-8"> <title>Wrapper 管理器</title> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" /> <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script> <style> :root { --bg-color: #f4f6f8; --card-bg: #ffffff; --text-main: #2c3e50; --text-sub: #7f8c8d; --border-color: #ecf0f1; --primary: #3498db; --success: #2ecc71; --warning: #f1c40f; --danger: #e74c3c; --code-bg: #f8f9fa; --hover-yellow: #f1c40f; --btn-text-color: #000000; --btn-start-bg: rgba(46, 204, 113, 0.4); --btn-restart-bg: rgba(241, 196, 15, 0.4); --btn-remove-bg: rgba(231, 76, 60, 0.2); --log-bg: #f8f9fa; --log-fg: #2c3e50; }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
             --bg-color: #1a1b1e;
             --card-bg: #25262b;
             --text-main: #e9ecef;
@@ -63,856 +14,1037 @@
             --log-bg: #1c1c1c; 
             --log-fg: #f8f8f2; 
         }
+    }
+    
+    html.light-mode {
+        --bg-color: #f4f6f8;
+        --card-bg: #ffffff;
+        --text-main: #2c3e50;
+        --text-sub: #7f8c8d;
+        --border-color: #ecf0f1;
+        --code-bg: #f8f9fa;
+        --btn-text-color: #000000;
+        --log-bg: #1c1c1c;
+        --log-fg: #f8f8f2;
+    }
+    html.dark-mode {
+        --bg-color: #1a1b1e;
+        --card-bg: #25262b;
+        --text-main: #e9ecef;
+        --text-sub: #909296;
+        --border-color: #2c2e33;
+        --code-bg: #2c2e33;
+        --btn-text-color: #FFFFFF; 
+        --log-bg: #1c1c1c; 
+        --log-fg: #f8f8f2; 
+    }
 
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 40px 20px; transition: background-color 0.3s; }
-        .header-content { display: flex; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; } 
-        h1 { font-weight: 700; margin: 0; margin-right: auto; }
-        .header-controls { display: flex; gap: 10px; align-items: center; } 
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 40px 20px; transition: background-color 0.3s; }
+    .header-content { display: flex; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; } 
+    h1 { font-weight: 700; margin: 0; margin-right: auto; }
+    .header-controls { display: flex; gap: 10px; align-items: center; } 
+    
+    .filter-input {
+        height: 40px;
+        padding: 0 15px;
+        border-radius: 8px;
+        border: 1px solid #bdc3c7;
+        background: var(--bg-color);
+        color: var(--text-main);
+        outline: none;
+        width: 140px;
+        font-size: 16px;
+        font-family: monospace;
+        box-sizing: border-box;
+        transition: all 0.2s;
+    }
+    
+    html.dark-mode .filter-input {
+        border-color: var(--border-color);
+    }
+
+    .filter-input:focus {
+        border-color: var(--hover-yellow);
+        box-shadow: 0 0 0 1.5px var(--hover-yellow);
+    }
+
+    .control-button { 
+        width: 40px; height: 40px; 
+        border-radius: 50%; 
+        border: 1px solid var(--border-color); 
+        background: var(--card-bg); 
+        display: flex; 
+        align-items: center; 
+        justify-content: center;
+        cursor: pointer;
+        font-size: 20px;
+        line-height: 1;
+        transition: all 0.2s;
+        color: var(--text-main);
+        text-decoration: none;
+        padding: 0;
+        flex-shrink: 0;
+    }
+    .control-button:hover { 
+        background-color: var(--hover-yellow); 
+        color: #000; 
+        border-color: var(--hover-yellow);
+    }
+    
+    .sys-stats-container { margin-bottom: 12px; }
+    .sys-stats { font-size: 13px; background: var(--card-bg); padding: 8px 16px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: inline-flex; gap: 20px; color: var(--text-sub); border: 1px solid var(--border-color); }
+    .sys-stat-item strong { color: var(--primary); margin-left: 4px; font-family: monospace; }
+
+    .container { max-width: 1200px; margin: 0 auto; }
+    .process-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+    @media (min-width: 1120px) {
+        .process-list { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .process-card { 
+        background: var(--card-bg); 
+        border-radius: 12px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.05); 
+        padding: 20px; 
+        display: flex; 
+        flex-direction: column; 
         
-        .filter-input {
-            height: 40px;
-            padding: 0 15px;
-            border-radius: 8px;
-            border: 1px solid #bdc3c7;
-            background: var(--bg-color);
-            color: var(--text-main);
-            outline: none;
-            width: 140px;
-            font-size: 16px;
-            font-family: monospace;
-            box-sizing: border-box;
-            transition: all 0.2s;
-        }
+        border-style: solid;
+        border-width: 6px 4px 4px 4px;
         
-        html.dark-mode .filter-input {
-            border-color: var(--border-color);
-        }
+        min-height: 280px; 
+        transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s;
+        box-sizing: border-box;
+    }
+    
+    .process-card:hover { 
+        transform: translateY(-5px); 
+        box-shadow: 0 15px 25px rgba(0,0,0,0.15);
+        border-color: var(--hover-yellow) !important;
+        position: relative;
+        z-index: 1;
+    }
 
-        .filter-input:focus {
-            border-color: var(--hover-yellow);
-            box-shadow: 0 0 0 1.5px var(--hover-yellow);
-        }
+    .card-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 14px; }
+    .card-row.header { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); justify-content: space-between; }
+    
+    .label { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px !important; min-width: 70px; display: inline-block; }
+    .label-pid { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px !important; display: inline-block; }
+    
+    .value { font-family: 'SF Mono', 'Menlo', monospace; font-weight: 500; color: var(--text-main); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; position: relative; }
+    .status-dot.RUNNING { background-color: var(--success); box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2); animation: pulse 2s infinite; }
+    .status-dot.STOPPED { background-color: var(--text-sub); }
+    .status-dot.STARTING { background-color: var(--warning); }
+    .status-dot.FAILED { background-color: var(--danger); }
+    .status-text { font-weight: 600; transition: color 0.3s; }
+    .status-text.RUNNING { color: var(--success); }
+    .status-text.STARTING { color: var(--warning); }
+    .status-text.FAILED { color: var(--danger); }
+    .status-text.STOPPED { color: var(--text-sub); }
 
-        .control-button { 
-            width: 40px; height: 40px; 
-            border-radius: 50%; 
-            border: 1px solid var(--border-color); 
-            background: var(--card-bg); 
-            display: flex; 
-            align-items: center; 
-            justify-content: center;
-            cursor: pointer;
-            font-size: 20px;
-            line-height: 1;
-            transition: all 0.2s;
-            color: var(--text-main);
-            text-decoration: none;
-            padding: 0;
-            flex-shrink: 0;
-        }
-        .control-button:hover { 
-            background-color: var(--hover-yellow); 
-            color: #000; 
-            border-color: var(--hover-yellow);
-        }
-        
-        .sys-stats-container { margin-bottom: 12px; }
-        .sys-stats { font-size: 13px; background: var(--card-bg); padding: 8px 16px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: inline-flex; gap: 20px; color: var(--text-sub); border: 1px solid var(--border-color); }
-        .sys-stat-item strong { color: var(--primary); margin-left: 4px; font-family: monospace; }
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4); }
+        70% { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+    }
 
-        .container { max-width: 1200px; margin: 0 auto; }
-        .process-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
-        @media (min-width: 1120px) {
-            .process-list { grid-template-columns: repeat(4, 1fr); }
-        }
+    .process-command-edit { 
+        width: 100%; 
+        padding: 10px; 
+        margin-top: 10px;
+        box-sizing: border-box; 
+        font-family: 'SF Mono', 'Menlo', monospace; 
+        border: 1px solid var(--border-color); 
+        border-radius: 6px; 
+        background: var(--code-bg);
+        color: var(--text-main);
+        resize: vertical; 
+        min-height: 60px;
+        font-size: 12px;
+        outline: none;
+    }
+    .process-command-edit:focus { border-color: var(--primary); }
+    .process-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .process-buttons button { 
+        flex: 1; 
+        padding: 8px 0; 
+        border: none; 
+        border-radius: 6px; 
+        cursor: pointer; 
+        font-weight: 600; 
+        font-size: 12px; 
+        transition: all 0.2s;
+        color: var(--btn-text-color); 
+    }
+    .process-buttons button:hover { 
+        background-color: var(--hover-yellow) !important; 
+        color: #000 !important;
+        opacity: 1;
+    }
+    .btn-log { background-color: #74b9ff; color: #fff; border: none !important; }
+    .btn-log:hover { background-color: var(--hover-yellow) !important; color: #000 !important; border-color: var(--hover-yellow) !important; }
+    .btn-restart { background-color: var(--btn-restart-bg); }
+    .btn-start { background-color: var(--btn-start-bg); }
+    .btn-remove { background-color: var(--btn-remove-bg); }
+    .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
+    .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .modal-header h2 { margin: 0; font-size: 20px; }
+    .close { color: var(--text-sub); font-size: 28px; cursor: pointer; transition: color 0.2s; }
+    .close:hover { color: var(--text-main); }
+    .modal-content input[type="text"] { width: 100%; padding: 12px; box-sizing: border-box; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); }
+    .modal-content input[type="text"]:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
+    .input-group { display: flex; gap: 10px; margin-top: 10px; }
+    .input-group input { flex: 1; margin-top: 0 !important; }
+    .btn-send-cmd { padding: 0 20px; background-color: var(--primary); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+    .btn-send-cmd:hover { background-color: var(--hover-yellow); color: #000; }
+    .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; transition: all 0.2s; }
+    .region-select:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
+    .modal-label { font-size: 13px; font-weight: bold; margin-top: 15px; display: block; color: var(--text-sub); }
+    #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+    #addCommandButton:hover { background-color: var(--hover-yellow); color: #000; }
 
-        .process-card { 
-            background: var(--card-bg); 
-            border-radius: 12px; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.05); 
-            padding: 20px; 
-            display: flex; 
-            flex-direction: column; 
-            border: 1px solid var(--border-color);
-            min-height: 280px; 
-            transition: transform 0.3s, box-shadow 0.3s, border 0.3s;
-            box-sizing: border-box;
-        }
-        
-        .process-card:hover { 
-            transform: translateY(-5px); 
-            box-shadow: 0 15px 25px rgba(0,0,0,0.15), 0 0 0 8px var(--warning);
-            border: 1px solid var(--warning); 
-            position: relative;
-            z-index: 1;
-        }
+    #terminal-container {
+        width: 100%;
+        height: 450px;
+        background: #1c1c1c;
+        border-radius: 8px;
+        padding: 10px;
+        box-sizing: border-box;
+        border: 1px solid var(--border-color);
+        overflow: hidden; 
+    }
 
-        .card-row { display: flex; align-items: center; margin-bottom: 10px; font-size: 14px; }
-        .card-row.header { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); justify-content: space-between; }
-        
-        .label { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 8px !important; min-width: 70px; display: inline-block; }
-        .label-pid { color: var(--text-sub); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px !important; display: inline-block; }
-        
-        .value { font-family: 'SF Mono', 'Menlo', monospace; font-weight: 500; color: var(--text-main); }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; position: relative; }
-        .status-dot.RUNNING { background-color: var(--success); box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2); animation: pulse 2s infinite; }
-        .status-dot.STOPPED { background-color: var(--text-sub); }
-        .status-dot.STARTING { background-color: var(--warning); }
-        .status-dot.FAILED { background-color: var(--danger); }
-        .status-text { font-weight: 600; transition: color 0.3s; }
-        .status-text.RUNNING { color: var(--success); }
-        .status-text.STARTING { color: var(--warning); }
-        .status-text.FAILED { color: var(--danger); }
-        .status-text.STOPPED { color: var(--text-sub); }
+    #terminal-container .xterm-viewport::-webkit-scrollbar {
+        display: none; 
+    }
+    #terminal-container .xterm-viewport {
+        scrollbar-width: none; 
+        -ms-overflow-style: none; 
+    }
 
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
-        }
+    .sparkline-container { width: 100%; height: 30px; margin-top: 10px; position: relative; overflow: hidden; } 
+    .sparkline-line { fill: none; stroke-width: 1.5; }
+    .sparkline-tooltip { position: fixed; background: #333; color: white; padding: 2px 5px; border-radius: 3px; font-size: 10px; pointer-events: none; z-index: 1001; opacity: 0; transition: opacity 0.1s; transform: translate(-50%, -100%); }
+    .sparkline-v-line { stroke: var(--danger); stroke-width: 1; opacity: 0; transition: opacity 0.1s; }
 
-        .process-command-edit { 
-            width: 100%; 
-            padding: 10px; 
-            margin-top: 10px;
-            box-sizing: border-box; 
-            font-family: 'SF Mono', 'Menlo', monospace; 
-            border: 1px solid var(--border-color); 
-            border-radius: 6px; 
-            background: var(--code-bg);
-            color: var(--text-main);
-            resize: vertical; 
-            min-height: 60px;
-            font-size: 12px;
-            outline: none;
-        }
-        .process-command-edit:focus { border-color: var(--primary); }
-        .process-buttons { display: flex; gap: 10px; margin-top: 20px; }
-        .process-buttons button { 
-            flex: 1; 
-            padding: 8px 0; 
-            border: none; 
-            border-radius: 6px; 
-            cursor: pointer; 
-            font-weight: 600; 
-            font-size: 12px; 
-            transition: all 0.2s;
-            color: var(--btn-text-color); 
-        }
-        .process-buttons button:hover { 
-            background-color: var(--hover-yellow) !important; 
-            color: #000 !important;
-            opacity: 1;
-        }
-        .btn-log { background-color: #74b9ff; color: #fff; border: none !important; }
-        .btn-log:hover { background-color: var(--hover-yellow) !important; color: #000 !important; border-color: var(--hover-yellow) !important; }
-        .btn-restart { background-color: var(--btn-restart-bg); }
-        .btn-start { background-color: var(--btn-start-bg); }
-        .btn-remove { background-color: var(--btn-remove-bg); }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
-        .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .modal-header h2 { margin: 0; font-size: 20px; }
-        .close { color: var(--text-sub); font-size: 28px; cursor: pointer; transition: color 0.2s; }
-        .close:hover { color: var(--text-main); }
-        .modal-content input[type="text"] { width: 100%; padding: 12px; box-sizing: border-box; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); }
-        .modal-content input[type="text"]:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
-        .input-group { display: flex; gap: 10px; margin-top: 10px; }
-        .input-group input { flex: 1; margin-top: 0 !important; }
-        .btn-send-cmd { padding: 0 20px; background-color: var(--primary); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
-        .btn-send-cmd:hover { background-color: var(--hover-yellow); color: #000; }
-        .region-select { padding: 12px; margin-top: 10px; font-family: monospace; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-color); color: var(--text-main); cursor: pointer; transition: all 0.2s; }
-        .region-select:focus { border-color: var(--hover-yellow); outline: none; box-shadow: 0 0 0 1.5px var(--hover-yellow);}
-        .modal-label { font-size: 13px; font-weight: bold; margin-top: 15px; display: block; color: var(--text-sub); }
-        #addCommandButton { margin-top: 20px; width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-        #addCommandButton:hover { background-color: var(--hover-yellow); color: #000; }
+    .dropdown {
+        position: relative;
+        display: inline-block;
+    }
+    .dropbtn {
+        height: 40px;
+        padding: 0 15px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        background: var(--card-bg);
+        color: var(--text-main);
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s;
+    }
+    .dropbtn:hover {
+        background: var(--hover-yellow);
+        color: #000;
+        border-color: var(--hover-yellow);
+    }
+    .dropdown-content {
+        display: none;
+        position: absolute;
+        background-color: var(--card-bg);
+        min-width: 160px;
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        z-index: 100;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        overflow: hidden;
+        margin-top: 5px;
+    }
+    .dropdown-content a {
+        color: var(--text-main);
+        padding: 10px 16px;
+        text-decoration: none;
+        display: block;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    .dropdown-content a:hover {
+        background-color: var(--hover-yellow);
+        color: #000;
+    }
+    .dropdown-content a.action-all {
+        font-weight: bold;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--primary);
+    }
+    .show-dropdown {
+        display: block;
+    }
+</style>
+</head> <body>
 
-        #terminal-container {
-            width: 100%;
-            height: 450px;
-            background: #1c1c1c;
-            border-radius: 8px;
-            padding: 10px;
-            box-sizing: border-box;
-            border: 1px solid var(--border-color);
-            overflow: hidden; 
-        }
+<div class="container">
+    
+    <div class="header-content">
+        <h1>Wrapper 管理器</h1>
+        <div class="header-controls">
+            
+            <input type="text" id="regionFilter" class="filter-input" placeholder="筛选区域如:cn">
 
-        #terminal-container .xterm-viewport::-webkit-scrollbar {
-            display: none; /* Chrome, Safari, Edge */
-        }
-        #terminal-container .xterm-viewport {
-            scrollbar-width: none; /* Firefox */
-            -ms-overflow-style: none; /* IE 10+ */
-        }
-
-        .sparkline-container { width: 100%; height: 30px; margin-top: 10px; position: relative; overflow: hidden; } 
-        .sparkline-line { fill: none; stroke-width: 1.5; }
-        .sparkline-tooltip { position: fixed; background: #333; color: white; padding: 2px 5px; border-radius: 3px; font-size: 10px; pointer-events: none; z-index: 1001; opacity: 0; transition: opacity 0.1s; transform: translate(-50%, -100%); }
-        .sparkline-v-line { stroke: var(--danger); stroke-width: 1; opacity: 0; transition: opacity 0.1s; }
-
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        
-        <div class="header-content">
-            <h1>Wrapper 管理器</h1>
-            <div class="header-controls">
-                
-                <input type="text" id="regionFilter" class="filter-input" placeholder="筛选区域如:cn">
-
-                <div class="control-button" id="darkModeToggle" title="切换显示模式">
-                    <span id="modeIcon">☀️</span>
-                </div>
-                <div class="control-button" id="addProcessButton" title="添加新进程">
-                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                </div>
-                
-                <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器" class="control-button">
-                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                </a>
-
-                <a href="https://github.com/sky8282/apple-music-downloader" target="_blank" title="多账号多线程Go下载器" class="control-button">
-                   <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                </a>
+            <div class="control-button" id="darkModeToggle" title="切换显示模式">
+                <span id="modeIcon">☀️</span>
             </div>
-        </div>
-
-        <div class="sys-stats-container">
-            <span class="sys-stats">
-                <span class="sys-stat-item">CPU:<strong id="statCpu">0%</strong></span>
-                <span class="sys-stat-item">内存:<strong id="statMem">0%</strong></span>
-                <span class="sys-stat-item">上传↑:<strong id="statUp">0 KB/s</strong></span>
-                <span class="sys-stat-item">下载↓:<strong id="statDown">0 KB/s</strong></span>
-            </span>
-        </div>
-        
-        <div class="process-list" id="processList">
-        </div>
-    </div>
-
-    <div class="sparkline-tooltip" id="globalTooltip"></div>
-
-    <div id="addModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>添加新 Wrapper 进程</h2>
-                <span class="close" data-modal="addModal">&times;</span>
-            </div>
-            
-            <span class="modal-label">区域/账号标识 (输入或从右侧选择):</span>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <input type="text" id="addRegionInput" value="cn" placeholder="自定义" style="flex: 1; margin-top: 10px;">
-                <select id="regionSelect" class="region-select" style="flex: 1;">
-                    <option value="">选择账号对应的区域...</option>
-                </select>
-            </div>
-
-            <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H 指定解密ip<br>-D 指定解密端口<br>-M 指定m3u8端口<br>-L 登录账号<br>-P 指定代理<br><br></span>
-            <input type="text" id="addCommandInput" value="-H 127.0.0.1 -D 10020 -M 10021 -L 邮箱:密码 -P 代理">
-            
-            <button id="addCommandButton">添加并启动</button>
-        </div>
-    </div>
-
-    <div id="logModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 id="logModalTitle">进程日志</h2>
-                <span class="close" data-modal="logModal">&times;</span>
-            </div>
-            <div id="terminal-container"></div>
-            
-            <div class="input-group">
-                <input type="text" id="terminalInput" placeholder="输入 2FA 验证码 (按键盘Enter或点击右边发送按钮)">
-                <button id="send2FAButton" class="btn-send-cmd">发送</button>
-            </div>
-            <div style="font-size:12px; color:var(--text-sub); margin-top:5px;">提示：出现 type 6 提示后，请去卡片点击重启按钮</div>
-        </div>
-    </div>
-
-    <script>
-        let ws;
-        const MAX_HISTORY_POINTS = 900; 
-        const DISPLAY_POINTS = 60; 
-        const SVG_HEIGHT = 30;
-
-        const statCpu = document.getElementById('statCpu');
-        const statMem = document.getElementById('statMem');
-        const statDown = document.getElementById('statDown');
-        const statUp = document.getElementById('statUp');
-        const addProcessButton = document.getElementById('addProcessButton');
-        const darkModeToggle = document.getElementById('darkModeToggle');
-        const modeIcon = document.getElementById('modeIcon');
-        const globalTooltip = document.getElementById('globalTooltip');
-        const regionFilter = document.getElementById('regionFilter');
-        const terminalContainer = document.getElementById('terminal-container');
-        
-        let term;
-        let fitAddon;
-
-        function connectWebSocket() {
-            ws = new WebSocket("ws://" + window.location.host + "/ws");
-            
-            ws.onopen = () => console.log("WebSocket 已连接");
-            
-            ws.onclose = () => {
-                console.log("WebSocket 已断开，3秒后重连...");
-                setTimeout(connectWebSocket, 3000);
-            };
-            
-            ws.onerror = (err) => console.error("WebSocket 错误:", err);
-
-            ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                switch (msg.type) {
-                    case "full_status":
-                        renderProcessList(msg.payload);
-                        break;
-                    case "state_update":
-                        updateProcessCard(msg.payload);
-                        applyFilter();
-                        break;
-                    case "log_line":
-                        appendLog(msg.id, msg.data);
-                        break;
-                    case "full_log":
-                        renderFullLog(msg.id, msg.payload);
-                        break;
-                    case "process_removed":
-                        const card = document.getElementById("card-" + msg.id);
-                        if (card) {
-                            card.remove();
-                            delete speedHistory[msg.id];
-                        }
-                        break;
-                    case "system_stats":
-                        statCpu.textContent = msg.payload.cpu.toFixed(1) + '%';
-                        statMem.textContent = msg.payload.mem.toFixed(1) + '%';
-                        statDown.textContent = formatSpeed(msg.payload.net_down);
-                        statUp.textContent = formatSpeed(msg.payload.net_up);
-                        if (msg.payload.os_info) {
-                            globalOSInfo = msg.payload.os_info;
-                            document.querySelectorAll('.proc-os-info').forEach(el => {
-                                if (el.textContent === "Loading...") {
-                                    el.textContent = globalOSInfo;
-                                }
-                            });
-                        }
-                        break;
-                }
-            };
-        }
-
-        connectWebSocket();
-
-        function initTerminal() {
-            term = new Terminal({
-                cursorBlink: true,
-                convertEol: true,
-                fontSize: 13,
-                fontFamily: 'SF Mono, Menlo, monospace',
-                theme: { background: '#1c1c1c' }
-            });
-            fitAddon = new FitAddon.FitAddon();
-            term.loadAddon(fitAddon);
-            term.open(terminalContainer);
-            fitAddon.fit();
-        }
-
-        let speedHistory = {}; 
-        let globalOSInfo = "Loading...";
-        
-        let currentMode = 'light';
-        document.documentElement.classList.add('light-mode');
-        document.documentElement.classList.remove('dark-mode');
-        modeIcon.textContent = '☀️';
-
-        function toggleDarkMode() {
-            if (currentMode === 'dark') {
-                document.documentElement.classList.remove('dark-mode');
-                document.documentElement.classList.add('light-mode');
-                modeIcon.textContent = '☀️';
-                currentMode = 'light';
-            } else {
-                document.documentElement.classList.remove('light-mode');
-                document.documentElement.classList.add('dark-mode');
-                modeIcon.textContent = '🌙';
-                currentMode = 'dark';
-            }
-        }
-        darkModeToggle.onclick = toggleDarkMode;
-
-        const regionList = [
-           "cn", "hk", "jp", "kr", "sg", "tw", "us", "ca", "nl", "au", "nz", "my", "th", "vn", "ph", "id", "in", "fr", "de", "it", "es", "gb", "ng", 
-           "se", "no", "fi", "dk", "ie", "ch", "pl", "be", "pt", "at", "cz", "sk", "hu", "gr", "ro", "bg", "lu", "lt", "lv", "ee", "si",
-           "hr", "mt", "cy", "ru", "tr", "il", "ae", "sa", "qa", "kw", "bh", "om", "br", "ar", "mx", "cl", "co", "pe", "uy", "py", "bo",
-           "ec", "za", "ke", "gh", "ma", "dz", "tn", "is", "mc", "li", "rs", "ua", "md", "ge", "am", "az", "kz", "mo", "al", "ba",
-           "mk", "me", "xk"
-        ];
-
-        function initRegionSelect() {
-            const regionSelect = document.getElementById('regionSelect');
-            const addRegionInput = document.getElementById('addRegionInput');
-            
-            regionList.forEach(code => {
-                const option = document.createElement('option');
-                option.value = code;
-                option.textContent = code;
-                regionSelect.appendChild(option);
-            });
-
-            regionSelect.onchange = () => {
-                if (regionSelect.value) {
-                    addRegionInput.value = regionSelect.value;
-                }
-            };
-        }
-        initRegionSelect();
-
-        function applyFilter() {
-            const filterVal = regionFilter.value.trim().toLowerCase();
-            const cards = document.querySelectorAll('.process-card');
-            
-            cards.forEach(card => {
-                const region = card.dataset.region ? card.dataset.region.toLowerCase() : '';
-                if (filterVal === '' || region.includes(filterVal)) {
-                    card.style.display = 'flex';
-                } else {
-                    card.style.display = 'none';
-                }
-            });
-        }
-
-        regionFilter.addEventListener('input', applyFilter);
-
-
-        function formatSpeed(bytes) {
-            if (bytes < 1024) return bytes.toFixed(0) + ' B/s';
-            const k = bytes / 1024;
-            if (k < 1024) return k.toFixed(1) + ' KB/s';
-            const m = k / 1024;
-            return m.toFixed(1) + ' MB/s';
-        }
-
-        function speedToBytes(speedStr) {
-            if (!speedStr || speedStr === 'N/A') return 0;
-            const parts = speedStr.split(' ');
-            if (parts.length < 2) return 0;
-            const value = parseFloat(parts[0]);
-            const unit = parts[1].toLowerCase();
-
-            if (unit.startsWith('kb')) return value * 1024;
-            if (unit.startsWith('mb')) return value * 1024 * 1024;
-            return value; 
-        }
-        
-        function drawSparkline(id, history) {
-            const container = document.getElementById(`sparkline-${id}`);
-            if (!container) return;
-
-            const width = container.clientWidth;
-            
-            const displayData = history.slice(-DISPLAY_POINTS).map(item => item.value);
-            if (displayData.length < 2) {
-                 container.innerHTML = `<svg width="${width}" height="${SVG_HEIGHT}"></svg>`;
-                 return;
-            }
-
-            const maxSpeed = Math.max(...displayData, 1);
-            const xStep = width / (displayData.length - 1);
-            
-            let points = [];
-            for (let i = 0; i < displayData.length; i++) {
-                const x = i * xStep;
-                const y = SVG_HEIGHT - (displayData[i] / maxSpeed) * SVG_HEIGHT;
-                points.push(`${x},${y}`);
-            }
-
-            const path = points.join(' ');
-            const svgContent = `
-                <svg width="${width}" height="${SVG_HEIGHT}" viewBox="0 0 ${width} ${SVG_HEIGHT}" data-id="${id}" class="sparkline-svg">
-                    <polyline fill="none" stroke="var(--primary)" points="${path}" class="sparkline-line" />
-                    <line class="sparkline-v-line" id="vLine-${id}" y1="0" y2="${SVG_HEIGHT}" />
-                    <circle id="hCircle-${id}" r="3" fill="var(--danger)" style="opacity:0;" />
-                    <rect x="0" y="0" width="${width}" height="${SVG_HEIGHT}" fill="transparent" class="sparkline-overlay" />
+            <div class="control-button" id="addProcessButton" title="添加新进程">
+                <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
-            `;
-            container.innerHTML = svgContent;
+            </div>
+            
+            <div class="dropdown" title="重启进程">
+                <button class="dropbtn" onclick="toggleDropdown('restartDropdown')">
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                </button>
+                <div id="restartDropdown" class="dropdown-content">
+                </div>
+            </div>
 
-            const overlay = container.querySelector('.sparkline-overlay');
-            if (overlay) {
-                overlay.onmousemove = (e) => handleSparklineHover(e, id, displayData, width, maxSpeed, xStep);
-                overlay.onmouseout = () => handleSparklineOut(id);
-            }
-        }
+            <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器" class="control-button">
+                <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+            </a>
+
+            <a href="https://github.com/sky8282/apple-music-downloader" target="_blank" title="多账号多线程Go下载器" class="control-button">
+               <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+            </a>
+        </div>
+    </div>
+
+    <div class="sys-stats-container">
+        <span class="sys-stats">
+            <span class="sys-stat-item">CPU:<strong id="statCpu">0%</strong></span>
+            <span class="sys-stat-item">内存:<strong id="statMem">0%</strong></span>
+            <span class="sys-stat-item">上传↑:<strong id="statUp">0 KB/s</strong></span>
+            <span class="sys-stat-item">下载↓:<strong id="statDown">0 KB/s</strong></span>
+        </span>
+    </div>
+    
+    <div class="process-list" id="processList">
+    </div>
+</div>
+
+<div class="sparkline-tooltip" id="globalTooltip"></div>
+
+<div id="addModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>添加新 Wrapper 进程</h2>
+            <span class="close" data-modal="addModal">&times;</span>
+        </div>
         
-        function handleSparklineHover(e, id, data, width, maxSpeed, xStep) {
-            const container = document.getElementById(`sparkline-${id}`);
-            const vLine = document.getElementById(`vLine-${id}`);
-            const hCircle = document.getElementById(`hCircle-${id}`);
-            
-            if (!container || !vLine || !hCircle) return;
+        <span class="modal-label">区域/账号标识 (输入或从右侧选择):</span>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="addRegionInput" value="cn" placeholder="自定义" style="flex: 1; margin-top: 10px;">
+            <select id="regionSelect" class="region-select" style="flex: 1;">
+                <option value="">选择账号对应的区域...</option>
+            </select>
+        </div>
 
-            const rect = container.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-
-            let index = Math.round(mouseX / xStep);
-            if (index < 0) index = 0;
-            if (index >= data.length) index = data.length - 1;
-
-            const speedValue = data[index];
-            const displaySpeed = formatSpeed(speedValue);
-            
-            const xPos = index * xStep;
-            const yPos = SVG_HEIGHT - (speedValue / maxSpeed) * SVG_HEIGHT;
-
-            vLine.setAttribute('x1', xPos);
-            vLine.setAttribute('x2', xPos);
-            vLine.style.opacity = 1;
-            
-            hCircle.setAttribute('cx', xPos);
-            hCircle.setAttribute('cy', yPos);
-            hCircle.style.opacity = 1;
-
-            globalTooltip.textContent = displaySpeed;
-            globalTooltip.style.opacity = 1;
-            globalTooltip.style.left = `${e.clientX}px`;
-            globalTooltip.style.top = `${e.clientY}px`;
-        }
-
-        function handleSparklineOut(id) {
-            const vLine = document.getElementById(`vLine-${id}`);
-            const hCircle = document.getElementById(`hCircle-${id}`);
-
-            globalTooltip.style.opacity = 0;
-            if (vLine) vLine.style.opacity = 0;
-            if (hCircle) hCircle.style.opacity = 0;
-        }
-
-        const processListEl = document.getElementById('processList');
-        const addModal = document.getElementById('addModal');
-        const logModal = document.getElementById('logModal');
-        const addCommandInput = document.getElementById('addCommandInput');
-        const addRegionInput = document.getElementById('addRegionInput');
-        const addCommandButton = document.getElementById('addCommandButton');
-        const logModalTitle = document.getElementById('logModalTitle');
-        const terminalInput = document.getElementById('terminalInput');
-        const send2FAButton = document.getElementById('send2FAButton');
+        <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H 指定解密ip<br>-D 指定解密端口<br>-M 指定m3u8端口<br>-L 登录账号<br>-P 指定代理<br><br></span>
+        <input type="text" id="addCommandInput" value="-H 127.0.0.1 -D 10020 -M 10021 -L 邮箱:密码 -P 代理">
         
-        addProcessButton.onclick = () => addModal.style.display = 'block';
+        <button id="addCommandButton">添加并启动</button>
+    </div>
+</div>
 
-        let currentLogID = null; 
+<div id="logModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="logModalTitle">进程日志</h2>
+            <span class="close" data-modal="logModal">&times;</span>
+        </div>
+        <div id="terminal-container"></div>
         
-        function renderProcessList(processes) {
-            while (processListEl.firstChild) {
-                processListEl.removeChild(processListEl.firstChild);
-            }
-            if (processes) {
-                processes.sort((a, b) => {
-                    const idA = parseInt(a.id, 10);
-                    const idB = parseInt(b.id, 10);
-                    return idA - idB;
-                });
+        <div class="input-group">
+            <input type="text" id="terminalInput" placeholder="输入 2FA 验证码 (按键盘Enter或点击右边发送按钮)">
+            <button id="send2FAButton" class="btn-send-cmd">发送</button>
+        </div>
+        <div style="font-size:12px; color:var(--text-sub); margin-top:5px;">提示：出现 type 6 提示后，请去卡片点击重启按钮</div>
+    </div>
+</div>
 
-                processes.forEach(proc => {
-                    if (!speedHistory[proc.id]) {
-                         speedHistory[proc.id] = [];
-                    }
-                    const card = createProcessCard(proc);
-                    processListEl.appendChild(card);
-                    updateProcessCard(proc); 
-                });
-                applyFilter();
-            }
-        }
+<script>
+    let ws;
+    const MAX_HISTORY_POINTS = 900; 
+    const DISPLAY_POINTS = 60; 
+    const SVG_HEIGHT = 30;
 
-        function updateProcessCard(proc) {
-            let existingCard = document.getElementById("card-" + proc.id);
+    const statCpu = document.getElementById('statCpu');
+    const statMem = document.getElementById('statMem');
+    const statDown = document.getElementById('statDown');
+    const statUp = document.getElementById('statUp');
+    const addProcessButton = document.getElementById('addProcessButton');
+    const darkModeToggle = document.getElementById('darkModeToggle');
+    const modeIcon = document.getElementById('modeIcon');
+    const globalTooltip = document.getElementById('globalTooltip');
+    const regionFilter = document.getElementById('regionFilter');
+    const terminalContainer = document.getElementById('terminal-container');
+    
+    let term;
+    let fitAddon;
 
-            if (!existingCard) {
-                const newCard = createProcessCard(proc);
-                const newId = parseInt(proc.id, 10);
-                let inserted = false;
-                const cards = processListEl.querySelectorAll('.process-card');
-
-                for (const existing of cards) {
-                    const existingId = parseInt(existing.id.replace('card-', ''), 10);
-                    if (!isNaN(existingId) && newId < existingId) {
-                        processListEl.insertBefore(newCard, existing);
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    processListEl.appendChild(newCard);
-                }
-                existingCard = newCard;
-            }
-
-            const currentBytes = speedToBytes(proc.netSpeed);
-            if (!speedHistory[proc.id]) {
-                speedHistory[proc.id] = [];
-            }
-            speedHistory[proc.id].push({ value: currentBytes, time: Date.now() });
-
-            if (speedHistory[proc.id].length > MAX_HISTORY_POINTS) {
-                speedHistory[proc.id].shift();
-            }
-
-            drawSparkline(proc.id, speedHistory[proc.id]);
-            
-            const dot = existingCard.querySelector('.status-dot');
-            const statusText = existingCard.querySelector('.status-text');
-            dot.className = "status-dot " + proc.state;
-            statusText.textContent = proc.state;
-            statusText.className = "status-text " + proc.state;
-            existingCard.querySelector('.proc-pid').textContent = proc.pid || 'N/A';
-            const runtimeEl = existingCard.querySelector('.proc-runtime');
-            const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
-            const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
-            runtimeEl.dataset.starttime = startTimeMillis;
-            if (startTimeMillis === 0) {
-                runtimeEl.textContent = 'N/A';
-            }
-            
-            existingCard.querySelector('.proc-speed').textContent = proc.netSpeed || 'N/A';
-            
-            const startBtn = existingCard.querySelector('.btn-start');
-            const restartBtn = existingCard.querySelector('.btn-restart');              
-            if (proc.state === "STOPPED" || proc.state === "FAILED") {
-                startBtn.style.display = 'inline-block';
-                restartBtn.style.display = 'none';
-            } else {
-                startBtn.style.display = 'none';
-                restartBtn.style.display = 'inline-block';
-            }
-        }
-
-        function parsePortsObj(command) {
-            const dPort = command.match(/-D\s+([^\s]+)/)?.[1] || "N/A";
-            const mPort = command.match(/-M\s+([^\s]+)/)?.[1] || "N/A";
-            return { d: dPort, m: mPort };
-        }
-
-        function parseDPort(args) {
-             for (let i = 0; i < args.length; i++) {
-                if (args[i] === '-D' && i + 1 < args.length) {
-                    const parts = args[i+1].split(':');
-                    return parts[parts.length - 1];
-                }
-            }
-            for (const arg of args) {
-                if (arg.startsWith("-D") && arg.length > 2) {
-                     const parts = arg.substring(2).split(':');
-                     return parts[parts.length - 1];
-                }
-            }
-            return "";
-        }
-
-        function createProcessCard(proc) {
-            const card = document.createElement('div');
-            card.className = 'process-card';
-            card.id = 'card-' + proc.id;
-            card.dataset.region = proc.region || "cn";
-            
-            const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
-            const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
-            const isStopped = proc.state === 'STOPPED' || proc.state === 'FAILED';
-            const ports = parsePortsObj(proc.command);
-
-            card.innerHTML = `
-                <div class="card-row header">
-                    <span style="display:flex; align-items:center;">
-                        <span class="status-dot ${proc.state}"></span>
-                        <span class="status-text">${proc.state}</span>
-                    </span>
-                    <span><span class="label-pid">PID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
-                </div>
-                
-                <div class="card-row">
-                    <span><span class="label">操作系统:</span><span class="value proc-os-info">${globalOSInfo}</span></span>
-                </div>
-
-                <div class="card-row">
-                    <span><span class="label">账号区域:</span><strong style="color:var(--primary)">${proc.region || "cn"}</strong></span>
-                </div>
-
-                <div class="card-row">
-                    <span><span class="label">监听端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
-                </div>
-
-                <div class="card-row">
-                    <span><span class="label">运行时间:</span><span class="value proc-runtime" data-starttime="${startTimeMillis}">N/A</span></span>
-                </div>
-                
-                <div class="card-row">
-                    <span><span class="label">解密速度:</span><span class="value proc-speed">${proc.netSpeed || 'N/A'}</span></span>
-                </div>
-                
-                <div class="sparkline-container" id="sparkline-${proc.id}">
-                </div>
-
-                <textarea class="process-command-edit" rows="3">${proc.command}</textarea>
-
-                <div class="process-buttons">
-                    <button class="btn-log" data-id="${proc.id}">日志</button>
-                    <button class="btn-start" data-id="${proc.id}" style="display: ${isStopped ? 'inline-block' : 'none'};">启动</button>
-                    <button class="btn-restart" data-id="${proc.id}" style="display: ${isStopped ? 'none' : 'inline-block'};">重启</button>
-                    <button class="btn-remove" data-id="${proc.id}">移除</button>
-                </div>
-            `;
-            return card;
-        }
-
-        function appendLog(id, line) {
-            if (id === currentLogID && term) {
-                term.writeln(line);
-            }
-        }
-
-        function renderFullLog(id, lines) {
-            if (term) {
-                term.clear();
-                if (lines) {
-                    lines.forEach(line => term.writeln(line));
-                }
-            }
-        }
-
-        function formatDuration(ms) {
-            if (ms <= 0) return 'N/A';
-            const totalSeconds = Math.floor(ms / 1000);
-            const d = Math.floor(totalSeconds / 86400);
-            const h = String(Math.floor((totalSeconds % 86400) / 3600)).padStart(2, '0');
-            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-            const s = String(totalSeconds % 60).padStart(2, '0');
-            
-            if (d > 0) {
-                return `${d}天 ${h}:${m}:${s}`;
-            }
-            return `${h}:${m}:${s}`;
-        }
-
-        setInterval(() => {
-            document.querySelectorAll('.proc-runtime').forEach(el => {
-                const startTime = parseInt(el.dataset.starttime, 10);
-                if (startTime > 0) {
-                    el.textContent = formatDuration(Date.now() - startTime);
-                }
-            });
-        }, 1000);
-
-        function splitCommand(commandText) {
-             return commandText.match(/(".*?"|[^"\s]+)+(?=\s*|\s*$)/g) || [];
-        }
-
-        processListEl.addEventListener('click', (e) => {
-            const target = e.target;
-            const id = target.dataset.id;
-            if (!id) return;
-
-            if (target.classList.contains('btn-log')) {
-                currentLogID = id;
-                logModalTitle.textContent = "进程日志 (ID: " + id + ")";
-                send2FAButton.dataset.id = id;
-                terminalInput.dataset.id = id;
-                logModal.style.display = 'block';
-                if (!term) {
-                    initTerminal();
-                } else {
-                    term.clear();
-                    fitAddon.fit();
-                }
-                ws.send(JSON.stringify({ type: "get_logs", id: id }));
-            }
-            
-            if (target.classList.contains('btn-start') || target.classList.contains('btn-restart')) {
-                const card = document.getElementById('card-' + id);
-                const commandText = card.querySelector('.process-command-edit').value;
-                const region = card.dataset.region;
-                const args = splitCommand(commandText);
-                const newId = parseDPort(args);
-                
-                if (!newId) {
-                    alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
-                    return;
-                }
-                
-                ws.send(JSON.stringify({ 
-                    type: "start_process", 
-                    command: commandText, 
-                    args: args, 
-                    region: region 
-                }));
-            }
-                        
-            if (target.classList.contains('btn-remove')) {
-                if (confirm("确定要移除进程 " + id + " 吗?")) {
-                    ws.send(JSON.stringify({ type: "remove_process", id: id }));
-                }
-            }
-        });
-
-        addCommandButton.onclick = () => {
-            const commandText = addCommandInput.value;
-            const regionVal = addRegionInput.value.trim() || "cn";
-            const args = splitCommand(commandText);
-            const id = parseDPort(args);
-
-            if (!id) {
-                alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
-                return;
-            }
-
-            ws.send(JSON.stringify({ 
-                type: "start_process", 
-                command: commandText, 
-                args: args, 
-                region: regionVal 
-            }));
-            addModal.style.display = 'none';
+    function connectWebSocket() {
+        ws = new WebSocket("ws://" + window.location.host + "/ws");
+        
+        ws.onopen = () => console.log("WebSocket 已连接");
+        
+        ws.onclose = () => {
+            console.log("WebSocket 已断开，3秒后重连...");
+            setTimeout(connectWebSocket, 3000);
         };
+        
+        ws.onerror = (err) => console.error("WebSocket 错误:", err);
 
-        function sendTerminalData() {
-            const id = terminalInput.dataset.id || send2FAButton.dataset.id;
-            const data = terminalInput.value;
-            if (id && data) {
-                ws.send(JSON.stringify({ type: "stdin", id: id, data: data }));
-                terminalInput.value = "";
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            switch (msg.type) {
+                case "full_status":
+                    renderProcessList(msg.payload);
+                    break;
+                case "state_update":
+                    updateProcessCard(msg.payload);
+                    applyFilter();
+                    break;
+                case "log_line":
+                    appendLog(msg.id, msg.data);
+                    break;
+                case "full_log":
+                    renderFullLog(msg.id, msg.payload);
+                    break;
+                case "process_removed":
+                    const card = document.getElementById("card-" + msg.id);
+                    if (card) {
+                        card.remove();
+                        delete speedHistory[msg.id];
+                    }
+                    break;
+                case "system_stats":
+                    statCpu.textContent = msg.payload.cpu.toFixed(1) + '%';
+                    statMem.textContent = msg.payload.mem.toFixed(1) + '%';
+                    statDown.textContent = formatSpeed(msg.payload.net_down);
+                    statUp.textContent = formatSpeed(msg.payload.net_up);
+                    if (msg.payload.os_info) {
+                        globalOSInfo = msg.payload.os_info;
+                        document.querySelectorAll('.proc-os-info').forEach(el => {
+                            if (el.textContent === "Loading...") {
+                                el.textContent = globalOSInfo;
+                            }
+                        });
+                    }
+                    break;
             }
+        };
+    }
+
+    connectWebSocket();
+
+    function initTerminal() {
+        term = new Terminal({
+            cursorBlink: true,
+            convertEol: true,
+            fontSize: 13,
+            fontFamily: 'SF Mono, Menlo, monospace',
+            theme: { background: '#1c1c1c' }
+        });
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(terminalContainer);
+        fitAddon.fit();
+    }
+
+    let speedHistory = {}; 
+    let globalOSInfo = "Loading...";
+    
+    let currentMode = 'light';
+    document.documentElement.classList.add('light-mode');
+    document.documentElement.classList.remove('dark-mode');
+    modeIcon.textContent = '☀️';
+
+    function toggleDarkMode() {
+        if (currentMode === 'dark') {
+            document.documentElement.classList.remove('dark-mode');
+            document.documentElement.classList.add('light-mode');
+            modeIcon.textContent = '☀️';
+            currentMode = 'light';
+        } else {
+            document.documentElement.classList.remove('light-mode');
+            document.documentElement.classList.add('dark-mode');
+            modeIcon.textContent = '🌙';
+            currentMode = 'dark';
+        }
+    }
+    darkModeToggle.onclick = toggleDarkMode;
+
+    const regionList = [
+       "cn", "hk", "jp", "kr", "sg", "tw", "us", "ca", "nl", "au", "nz", "my", "th", "vn", "ph", "id", "in", "fr", "de", "it", "es", "gb", "ng", 
+       "se", "no", "fi", "dk", "ie", "ch", "pl", "be", "pt", "at", "cz", "sk", "hu", "gr", "ro", "bg", "lu", "lt", "lv", "ee", "si",
+       "hr", "mt", "cy", "ru", "tr", "il", "ae", "sa", "qa", "kw", "bh", "om", "br", "ar", "mx", "cl", "co", "pe", "uy", "py", "bo",
+       "ec", "za", "ke", "gh", "ma", "dz", "tn", "is", "mc", "li", "rs", "ua", "md", "ge", "am", "az", "kz", "mo", "al", "ba",
+       "mk", "me", "xk"
+    ];
+
+    function initRegionSelect() {
+        const regionSelect = document.getElementById('regionSelect');
+        const addRegionInput = document.getElementById('addRegionInput');
+        
+        regionList.forEach(code => {
+            const option = document.createElement('option');
+            option.value = code;
+            option.textContent = code;
+            regionSelect.appendChild(option);
+        });
+
+        regionSelect.onchange = () => {
+            if (regionSelect.value) {
+                addRegionInput.value = regionSelect.value;
+            }
+        };
+    }
+    initRegionSelect();
+
+    function applyFilter() {
+        const filterVal = regionFilter.value.trim().toLowerCase();
+        const cards = document.querySelectorAll('.process-card');
+        
+        cards.forEach(card => {
+            const region = card.dataset.region ? card.dataset.region.toLowerCase() : '';
+            if (filterVal === '' || region.includes(filterVal)) {
+                card.style.display = 'flex';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+
+    regionFilter.addEventListener('input', applyFilter);
+
+
+    function formatSpeed(bytes) {
+        if (bytes < 1024) return bytes.toFixed(0) + ' B/s';
+        const k = bytes / 1024;
+        if (k < 1024) return k.toFixed(1) + ' KB/s';
+        const m = k / 1024;
+        return m.toFixed(1) + ' MB/s';
+    }
+
+    function speedToBytes(speedStr) {
+        if (!speedStr || speedStr === 'N/A') return 0;
+        const parts = speedStr.split(' ');
+        if (parts.length < 2) return 0;
+        const value = parseFloat(parts[0]);
+        const unit = parts[1].toLowerCase();
+
+        if (unit.startsWith('kb')) return value * 1024;
+        if (unit.startsWith('mb')) return value * 1024 * 1024;
+        return value; 
+    }
+    
+    function drawSparkline(id, history) {
+        const container = document.getElementById(`sparkline-${id}`);
+        if (!container) return;
+
+        const width = container.clientWidth;
+        
+        const displayData = history.slice(-DISPLAY_POINTS).map(item => item.value);
+        if (displayData.length < 2) {
+             container.innerHTML = `<svg width="${width}" height="${SVG_HEIGHT}"></svg>`;
+             return;
         }
 
-        terminalInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                sendTerminalData();
+        const maxSpeed = Math.max(...displayData, 1);
+        const xStep = width / (displayData.length - 1);
+        
+        let points = [];
+        for (let i = 0; i < displayData.length; i++) {
+            const x = i * xStep;
+            const y = SVG_HEIGHT - (displayData[i] / maxSpeed) * SVG_HEIGHT;
+            points.push(`${x},${y}`);
+        }
+
+        const path = points.join(' ');
+        const svgContent = `
+            <svg width="${width}" height="${SVG_HEIGHT}" viewBox="0 0 ${width} ${SVG_HEIGHT}" data-id="${id}" class="sparkline-svg">
+                <polyline fill="none" stroke="var(--primary)" points="${path}" class="sparkline-line" />
+                <line class="sparkline-v-line" id="vLine-${id}" y1="0" y2="${SVG_HEIGHT}" />
+                <circle id="hCircle-${id}" r="3" fill="var(--danger)" style="opacity:0;" />
+                <rect x="0" y="0" width="${width}" height="${SVG_HEIGHT}" fill="transparent" class="sparkline-overlay" />
+            </svg>
+        `;
+        container.innerHTML = svgContent;
+
+        const overlay = container.querySelector('.sparkline-overlay');
+        if (overlay) {
+            overlay.onmousemove = (e) => handleSparklineHover(e, id, displayData, width, maxSpeed, xStep);
+            overlay.onmouseout = () => handleSparklineOut(id);
+        }
+    }
+    
+    function handleSparklineHover(e, id, data, width, maxSpeed, xStep) {
+        const container = document.getElementById(`sparkline-${id}`);
+        const vLine = document.getElementById(`vLine-${id}`);
+        const hCircle = document.getElementById(`hCircle-${id}`);
+        
+        if (!container || !vLine || !hCircle) return;
+
+        const rect = container.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+
+        let index = Math.round(mouseX / xStep);
+        if (index < 0) index = 0;
+        if (index >= data.length) index = data.length - 1;
+
+        const speedValue = data[index];
+        const displaySpeed = formatSpeed(speedValue);
+        
+        const xPos = index * xStep;
+        const yPos = SVG_HEIGHT - (speedValue / maxSpeed) * SVG_HEIGHT;
+
+        vLine.setAttribute('x1', xPos);
+        vLine.setAttribute('x2', xPos);
+        vLine.style.opacity = 1;
+        
+        hCircle.setAttribute('cx', xPos);
+        hCircle.setAttribute('cy', yPos);
+        hCircle.style.opacity = 1;
+
+        globalTooltip.textContent = displaySpeed;
+        globalTooltip.style.opacity = 1;
+        globalTooltip.style.left = `${e.clientX}px`;
+        globalTooltip.style.top = `${e.clientY}px`;
+    }
+
+    function handleSparklineOut(id) {
+        const vLine = document.getElementById(`vLine-${id}`);
+        const hCircle = document.getElementById(`hCircle-${id}`);
+
+        globalTooltip.style.opacity = 0;
+        if (vLine) vLine.style.opacity = 0;
+        if (hCircle) hCircle.style.opacity = 0;
+    }
+
+    const processListEl = document.getElementById('processList');
+    const addModal = document.getElementById('addModal');
+    const logModal = document.getElementById('logModal');
+    const addCommandInput = document.getElementById('addCommandInput');
+    const addRegionInput = document.getElementById('addRegionInput');
+    const addCommandButton = document.getElementById('addCommandButton');
+    const logModalTitle = document.getElementById('logModalTitle');
+    const terminalInput = document.getElementById('terminalInput');
+    const send2FAButton = document.getElementById('send2FAButton');
+    
+    addProcessButton.onclick = () => addModal.style.display = 'block';
+
+    let currentLogID = null; 
+    let activeRegions = new Set();
+
+    function updateActiveRegions(processes) {
+        activeRegions.clear();
+        processes.forEach(p => {
+            if (p.region) activeRegions.add(p.region);
+        });
+    }
+    
+    function renderProcessList(processes) {
+        while (processListEl.firstChild) {
+            processListEl.removeChild(processListEl.firstChild);
+        }
+        if (processes) {
+            updateActiveRegions(processes);
+            processes.sort((a, b) => {
+                const idA = parseInt(a.id, 10);
+                const idB = parseInt(b.id, 10);
+                return idA - idB;
+            });
+
+            processes.forEach(proc => {
+                if (!speedHistory[proc.id]) {
+                     speedHistory[proc.id] = [];
+                }
+                const card = createProcessCard(proc);
+                processListEl.appendChild(card);
+                updateProcessCard(proc); 
+            });
+            applyFilter();
+        }
+    }
+
+    function updateProcessCard(proc) {
+        let existingCard = document.getElementById("card-" + proc.id);
+
+        if (!existingCard) {
+            const newCard = createProcessCard(proc);
+            const newId = parseInt(proc.id, 10);
+            let inserted = false;
+            const cards = processListEl.querySelectorAll('.process-card');
+
+            for (const existing of cards) {
+                const existingId = parseInt(existing.id.replace('card-', ''), 10);
+                if (!isNaN(existingId) && newId < existingId) {
+                    processListEl.insertBefore(newCard, existing);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                processListEl.appendChild(newCard);
+            }
+            existingCard = newCard;
+        }
+
+        const currentBytes = speedToBytes(proc.netSpeed);
+        if (!speedHistory[proc.id]) {
+            speedHistory[proc.id] = [];
+        }
+        speedHistory[proc.id].push({ value: currentBytes, time: Date.now() });
+
+        if (speedHistory[proc.id].length > MAX_HISTORY_POINTS) {
+            speedHistory[proc.id].shift();
+        }
+
+        drawSparkline(proc.id, speedHistory[proc.id]);
+        
+        const dot = existingCard.querySelector('.status-dot');
+        const statusText = existingCard.querySelector('.status-text');
+        dot.className = "status-dot " + proc.state;
+        statusText.textContent = proc.state;
+        statusText.className = "status-text " + proc.state;
+        existingCard.querySelector('.proc-pid').textContent = proc.pid || 'N/A';
+        const runtimeEl = existingCard.querySelector('.proc-runtime');
+        const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
+        const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
+        runtimeEl.dataset.starttime = startTimeMillis;
+        if (startTimeMillis === 0) {
+            runtimeEl.textContent = 'N/A';
+        }
+        
+        existingCard.querySelector('.proc-speed').textContent = proc.netSpeed || 'N/A';
+        
+        const startBtn = existingCard.querySelector('.btn-start');
+        const restartBtn = existingCard.querySelector('.btn-restart');              
+        if (proc.state === "STOPPED" || proc.state === "FAILED") {
+            startBtn.style.display = 'inline-block';
+            restartBtn.style.display = 'none';
+        } else {
+            startBtn.style.display = 'none';
+            restartBtn.style.display = 'inline-block';
+        }
+    }
+
+    function parsePortsObj(command) {
+        const dPort = command.match(/-D\s+([^\s]+)/)?.[1] || "N/A";
+        const mPort = command.match(/-M\s+([^\s]+)/)?.[1] || "N/A";
+        return { d: dPort, m: mPort };
+    }
+
+    function parseDPort(args) {
+         for (let i = 0; i < args.length; i++) {
+            if (args[i] === '-D' && i + 1 < args.length) {
+                const parts = args[i+1].split(':');
+                return parts[parts.length - 1];
+            }
+        }
+        for (const arg of args) {
+            if (arg.startsWith("-D") && arg.length > 2) {
+                 const parts = arg.substring(2).split(':');
+                 return parts[parts.length - 1];
+            }
+        }
+        return "";
+    }
+
+    function getRegionColor(region) {
+        if (!region) return '#bdc3c7';
+        const palette = {
+            'cn': '#e74c3c',
+            'us': '#3498db',
+            'jp': '#9b59b6',
+            'hk': '#1abc9c',
+            'tw': '#f39c12',
+            'sg': '#2ecc71',
+            'kr': '#34495e',
+            'uk': '#e67e22',
+            'fr': '#d35400'
+        };
+        if (palette[region.toLowerCase()]) {
+            return palette[region.toLowerCase()];
+        }
+        let hash = 0;
+        for (let i = 0; i < region.length; i++) {
+            hash = region.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+        return '#' + "00000".substring(0, 6 - c.length) + c;
+    }
+
+    function createProcessCard(proc) {
+        const card = document.createElement('div');
+        card.className = 'process-card';
+        card.id = 'card-' + proc.id;
+        card.dataset.region = proc.region || "cn";
+        
+        const regionColor = getRegionColor(proc.region);
+        card.style.borderColor = regionColor;
+
+        const startTimeISO = proc.startTime && !proc.startTime.startsWith("0001") ? proc.startTime : null;
+        const startTimeMillis = startTimeISO ? new Date(startTimeISO).getTime() : 0;
+        const isStopped = proc.state === 'STOPPED' || proc.state === 'FAILED';
+        const ports = parsePortsObj(proc.command);
+
+        card.innerHTML = `
+            <div class="card-row header">
+                <span style="display:flex; align-items:center;">
+                    <span class="status-dot ${proc.state}"></span>
+                    <span class="status-text">${proc.state}</span>
+                </span>
+                <span><span class="label-pid">PID:</span><span class="value proc-pid">${proc.pid || 'N/A'}</span></span>
+            </div>
+            
+            <div class="card-row">
+                <span><span class="label">操作系统:</span><span class="value proc-os-info">${globalOSInfo}</span></span>
+            </div>
+
+            <div class="card-row">
+                <span><span class="label">账号区域:</span><strong style="color:${regionColor}; font-size:14px;">${proc.region || "cn"}</strong></span>
+            </div>
+
+            <div class="card-row">
+                <span><span class="label">监听端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
+            </div>
+
+            <div class="card-row">
+                <span><span class="label">运行时间:</span><span class="value proc-runtime" data-starttime="${startTimeMillis}">N/A</span></span>
+            </div>
+            
+            <div class="card-row">
+                <span><span class="label">解密速度:</span><span class="value proc-speed">${proc.netSpeed || 'N/A'}</span></span>
+            </div>
+            
+            <div class="sparkline-container" id="sparkline-${proc.id}">
+            </div>
+
+            <textarea class="process-command-edit" rows="3">${proc.command}</textarea>
+
+            <div class="process-buttons">
+                <button class="btn-log" data-id="${proc.id}">日志</button>
+                <button class="btn-start" data-id="${proc.id}" style="display: ${isStopped ? 'inline-block' : 'none'};">启动</button>
+                <button class="btn-restart" data-id="${proc.id}" style="display: ${isStopped ? 'none' : 'inline-block'};">重启</button>
+                <button class="btn-remove" data-id="${proc.id}">移除</button>
+            </div>
+        `;
+        return card;
+    }
+
+    function appendLog(id, line) {
+        if (id === currentLogID && term) {
+            term.writeln(line);
+        }
+    }
+
+    function renderFullLog(id, lines) {
+        if (term) {
+            term.clear();
+            if (lines) {
+                lines.forEach(line => term.writeln(line));
+            }
+        }
+    }
+
+    function formatDuration(ms) {
+        if (ms <= 0) return 'N/A';
+        const totalSeconds = Math.floor(ms / 1000);
+        const d = Math.floor(totalSeconds / 86400);
+        const h = String(Math.floor((totalSeconds % 86400) / 3600)).padStart(2, '0');
+        const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+        const s = String(totalSeconds % 60).padStart(2, '0');
+        
+        if (d > 0) {
+            return `${d}天 ${h}:${m}:${s}`;
+        }
+        return `${h}:${m}:${s}`;
+    }
+
+    setInterval(() => {
+        document.querySelectorAll('.proc-runtime').forEach(el => {
+            const startTime = parseInt(el.dataset.starttime, 10);
+            if (startTime > 0) {
+                el.textContent = formatDuration(Date.now() - startTime);
             }
         });
+    }, 1000);
 
-        send2FAButton.onclick = sendTerminalData;
+    function splitCommand(commandText) {
+         return commandText.match(/(".*?"|[^"\s]+)+(?=\s*|\s*$)/g) || [];
+    }
 
-        document.querySelectorAll('.close').forEach(el => {
-            el.onclick = () => {
-                document.getElementById(el.dataset.modal).style.display = 'none';
-                if (el.dataset.modal === 'logModal') {
-                    currentLogID = null; 
-                    if (term) term.clear();
-                }
-            };
-        });
+    processListEl.addEventListener('click', (e) => {
+        const target = e.target;
+        const id = target.dataset.id;
+        if (!id) return;
 
-        window.addEventListener('resize', () => {
-            if (fitAddon) {
+        if (target.classList.contains('btn-log')) {
+            currentLogID = id;
+            logModalTitle.textContent = "进程日志 (ID: " + id + ")";
+            send2FAButton.dataset.id = id;
+            terminalInput.dataset.id = id;
+            logModal.style.display = 'block';
+            if (!term) {
+                initTerminal();
+            } else {
+                term.clear();
                 fitAddon.fit();
             }
-        });
+            ws.send(JSON.stringify({ type: "get_logs", id: id }));
+        }
+        
+        if (target.classList.contains('btn-start') || target.classList.contains('btn-restart')) {
+            const card = document.getElementById('card-' + id);
+            triggerStartOrRestart(card, id);
+        }
+                    
+        if (target.classList.contains('btn-remove')) {
+            if (confirm("确定要移除进程 " + id + " 吗?")) {
+                ws.send(JSON.stringify({ type: "remove_process", id: id }));
+            }
+        }
+    });
 
-    </script>
-</body>
-</html>
+    function triggerStartOrRestart(card, id) {
+        const commandText = card.querySelector('.process-command-edit').value;
+        const region = card.dataset.region;
+        const args = splitCommand(commandText);
+        const newId = parseDPort(args);
+        
+        if (!newId) {
+            alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+            return;
+        }
+        
+        ws.send(JSON.stringify({ 
+            type: "start_process", 
+            command: commandText, 
+            args: args, 
+            region: region 
+        }));
+    }
+
+    addCommandButton.onclick = () => {
+        const commandText = addCommandInput.value;
+        const regionVal = addRegionInput.value.trim() || "cn";
+        const args = splitCommand(commandText);
+        const id = parseDPort(args);
+
+        if (!id) {
+            alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+            return;
+        }
+
+        ws.send(JSON.stringify({ 
+            type: "start_process", 
+            command: commandText, 
+            args: args, 
+            region: regionVal 
+        }));
+        addModal.style.display = 'none';
+    };
+
+    function sendTerminalData() {
+        const id = terminalInput.dataset.id || send2FAButton.dataset.id;
+        const data = terminalInput.value;
+        if (id && data) {
+            ws.send(JSON.stringify({ type: "stdin", id: id, data: data }));
+            terminalInput.value = "";
+        }
+    }
+
+    terminalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            sendTerminalData();
+        }
+    });
+
+    send2FAButton.onclick = sendTerminalData;
+
+    document.querySelectorAll('.close').forEach(el => {
+        el.onclick = () => {
+            document.getElementById(el.dataset.modal).style.display = 'none';
+            if (el.dataset.modal === 'logModal') {
+                currentLogID = null; 
+                if (term) term.clear();
+            }
+        };
+    });
+
+    window.addEventListener('resize', () => {
+        if (fitAddon) {
+            fitAddon.fit();
+        }
+    });
+
+    function toggleDropdown(id) {
+        const dropdown = document.getElementById(id);
+        
+        let html = '';
+        if (id === 'restartDropdown') {
+            html += `<a class="action-all" onclick="batchRestart('all')">全部重启 (All)</a>`;
+            activeRegions.forEach(region => {
+                html += `<a onclick="batchRestart('${region}')">重启区域: ${region.toUpperCase()}</a>`;
+            });
+        }
+        dropdown.innerHTML = html;
+        
+        document.querySelectorAll('.dropdown-content').forEach(d => {
+            if (d.id !== id) d.classList.remove('show-dropdown');
+        });
+        dropdown.classList.toggle('show-dropdown');
+    }
+
+    window.onclick = function(event) {
+        if (!event.target.matches('.dropbtn') && !event.target.matches('.dropbtn svg') && !event.target.matches('.dropbtn path')) {
+            var dropdowns = document.getElementsByClassName("dropdown-content");
+            for (var i = 0; i < dropdowns.length; i++) {
+                var openDropdown = dropdowns[i];
+                if (openDropdown.classList.contains('show-dropdown')) {
+                    openDropdown.classList.remove('show-dropdown');
+                }
+            }
+        }
+    }
+
+    function batchRestart(targetRegion) {
+        if (!confirm(`确定要重启 [${targetRegion === 'all' ? '所有' : targetRegion}] 进程吗？`)) return;
+        
+        const cards = document.querySelectorAll('.process-card');
+        cards.forEach(card => {
+            const region = card.dataset.region;
+            const id = card.id.replace('card-', '');
+            
+            if (targetRegion === 'all' || region === targetRegion) {
+                let btn = card.querySelector('.btn-restart');
+                if (btn && btn.style.display !== 'none') {
+                    triggerStartOrRestart(card, id);
+                } else {
+                    btn = card.querySelector('.btn-start');
+                    if (btn && btn.style.display !== 'none') {
+                        triggerStartOrRestart(card, id);
+                    }
+                }
+            }
+        });
+    }
+</script>
+</body> </html>
