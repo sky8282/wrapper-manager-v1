@@ -30,10 +30,12 @@ import (
 )
 
 const MaxLogLines = 200
+
 var GlobalRestartPatterns []string
+
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		b := make([]byte, 128*1024)
+		b := make([]byte, 1024*1024)
 		return &b
 	},
 }
@@ -637,7 +639,7 @@ func (p *ManagedProcess) runLoop() {
 			p.logToBuffer("\033[31m--- 进程意外退出 (或被监控触发重启) ---\033[0m")
 			p.setState(StateFailed)
 
-			if time.Since(processStartTime) > 60*time.Second {
+			if time.Since(processStartTime) > 3*time.Second {
 				p.mutex.Lock()
 				p.RetryCount = 0
 				p.mutex.Unlock()
@@ -650,14 +652,14 @@ func (p *ManagedProcess) runLoop() {
 			delay := 2 * time.Second
 
 			if isCKCError {
-				delay = 30 * time.Second
+				delay = 3 * time.Second
 				p.logToBuffer(fmt.Sprintf("\033[33m--- 触发 CKC 错误保护，进入冷却模式，等待 %v 后重启... ---\033[0m", delay))
 			} else {
 				p.logToBuffer(fmt.Sprintf("\033[33m--- 正在尝试自动重启，等待 %v ... ---\033[0m", delay))
 			}
 
 			time.Sleep(delay)
-			
+
 			globalManager.mutex.RLock()
 			_, exists := globalManager.Processes[p.ID]
 			globalManager.mutex.RUnlock()
@@ -1383,12 +1385,18 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 	defer backendConn.Close()
 
 	if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+		tcpConn.SetReadBuffer(4 * 1024 * 1024)
+		tcpConn.SetWriteBuffer(4 * 1024 * 1024)
 	}
 	if tcpConn, ok := backendConn.(*net.TCPConn); ok {
+		tcpConn.SetNoDelay(true)
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(30 * time.Second)
+		tcpConn.SetReadBuffer(4 * 1024 * 1024)
+		tcpConn.SetWriteBuffer(4 * 1024 * 1024)
 	}
 
 	var wg sync.WaitGroup
@@ -1396,18 +1404,29 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 
 	go func() {
 		defer wg.Done()
-		counter := &WriteCounter{Total: &p.ProxyBytesSent, Writer: clientConn}
-		io.Copy(counter, backendConn)
-		if conn, ok := clientConn.(*net.TCPConn); ok {
-			conn.CloseWrite()
+		bufPtr := bufferPool.Get().(*[]byte)
+		defer bufferPool.Put(bufPtr)
+		buf := *bufPtr
+		io.CopyBuffer(backendConn, clientConn, buf)
+		if c, ok := backendConn.(*net.TCPConn); ok {
+			c.CloseWrite()
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(backendConn, clientConn)
-		if conn, ok := backendConn.(*net.TCPConn); ok {
-			conn.CloseWrite()
+		bufPtr := bufferPool.Get().(*[]byte)
+		defer bufferPool.Put(bufPtr)
+		buf := *bufPtr
+		
+		counter := &WriteCounter{
+			Total:  &p.ProxyBytesSent,
+			Writer: clientConn,
+		}
+		
+		io.CopyBuffer(counter, backendConn, buf)
+		if c, ok := clientConn.(*net.TCPConn); ok {
+			c.CloseWrite()
 		}
 	}()
 
