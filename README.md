@@ -62,7 +62,7 @@ chmod +x wrapper-manager
 ```mermaid
 flowchart TD
     A["Apple Music"] --> B["Content ID<br>(歌曲ID)"]
-    B --> C["Authorization Token (AT)<br>从 Apple 服务器获取<br>有效期通常几小时到1天"]
+    B --> C["Authorization Token (AT)<br>从 Apple 服务器获取<br>有效期通常几小时到1天<br>且解密曲目应该为1000首"]
     C --> D["KDProcessPersistentKeyWithAT<br>AT + Content ID<br>生成 Persistent Key<br>用于离线播放(解密)"]
 
     D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)运行正常"]
