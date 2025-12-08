@@ -67,7 +67,7 @@ flowchart TD
 
     D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)运行正常"]
 
-    D -->|"播放(解密)失败<br>出现类似的警报:"| F["Persistent Key Error<br>密钥无效（过期 / AT 失效）<br>类似报警：<br>————————————<br>FairPlay error<br>————————————<br>Invalid CKC error<br>————————————<br>等等..."]
+    D -->|"播放(解密)失败<br>出现类似的警报:"| F["密钥无效（过期 / AT 失效）▼类似以下报警▼<br>————————————<br>FairPlay error<br>————————————<br>Invalid CKC error<br>————————————<br>Persistent Key Error<br>————————————<br>等等..."]
 
     F --> G["自动刷新 AT<br>网络不稳等可能同时触发<br>KDCanProcessCKC 报警"]
 
