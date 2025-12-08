@@ -1,5 +1,5 @@
 
-![2](https://github.com/user-attachments/assets/24df2618-d522-4382-86bd-fbb8307981eb)
+![2](https://github.com/user-attachments/assets/5bd2ad6f-83cb-4955-bf99-3e84594290db)
 
 # wrapper-manager-v1版
 一个基于 Web 的轻量级进程管理工具，专为管理 `wrapper` 二进制程序设计。它提供了一个可视化的仪表盘，支持多进程并发管理、日志实时查看、健康检查以及断线自动重启。
@@ -26,6 +26,7 @@
 /root/wrapper/
 ├── main.go           # 源码 (或者编译好的 wrapper-manager)
 ├── config.yaml       # wrapper-manager 配置文件
+├── manager.json      # 进程配置文件，添加进程会自动生成
 ├── index.html        # 前端界面
 ├── wrapper           # wrapper 二进制程序
 └── rootfs            # wrapper 相关的文件夹
@@ -58,7 +59,6 @@ chmod +x wrapper-manager
 * 在日志里查看并发送 `2fa` 验证码。
 * 注意：命令中必须包含 -D <端口> 参数，管理器将使用该端口作为进程的唯一 ID 进行识别和健康检查。
 * 仅个人理解的解密流程：
-
 ```mermaid
 flowchart TD
     A["Apple Music"] --> B["Content ID<br>(歌曲ID)"]
