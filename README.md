@@ -51,7 +51,12 @@ chmod +x wrapper-manager
 * 请根据账号区域等进行修改 config.yaml 参数并启动：
 ```text
 ./wrapper-manager
-``` 
+```
+### 显示解密速度需安装 iproute2 ：
+```text
+apt update
+apt install -y iproute2
+```
 ### 在web界面添加新进程：
 * 点击仪表盘上的 "+ 添加新进程" 卡片。
 * 输入或选择账号对应的区域。
