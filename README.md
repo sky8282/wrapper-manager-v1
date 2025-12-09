@@ -52,7 +52,7 @@ chmod +x wrapper-manager
 ```text
 ./wrapper-manager
 ```
-### 显示解密速度需安装 iproute2 ：
+### 负载均衡状态下显示解密速度需安装 iproute2 ：
 ```text
 apt update
 apt install -y iproute2
