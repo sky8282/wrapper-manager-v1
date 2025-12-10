@@ -66,25 +66,45 @@ apt install -y iproute2
 * 仅个人理解的解密流程：
 ```mermaid
 flowchart TD
+    %% 核心流程
     A["Apple Music"] --> B["Content ID<br>(歌曲ID)"]
-    B --> C["从 Apple 服务器获取:<br>Authorization Token (AT)<br>有效期通常几小时到1天<br>且解密曲目应该为1000首"]
-    C --> D["KDProcessPersistentKeyWithAT<br>AT + Content ID<br>生成 Persistent Key<br>用于离线播放(解密)"]
+    B --> C["获取 Authorization Token (AT)<br>有效期: 数小时~1天<br>解密限额: ~1000首"]
+    C --> D["调用 KDProcessPersistentKeyWithAT<br>(AT + Content ID)"]
 
-    D -->|"Persistent Key 解密成功<br>运行正常"| NormalPlay["Persistent Key 解密成功<br>离线播放(解密)运行正常"]
+    %% 成功分支
+    D -->|"✅ 解密成功"| NormalPlay["生成 Persistent Key<br>进入离线播放/解密流程"]
 
-    D -->|"播放(解密)失败<br>出现类似的警报:"| F["密钥无效（过期 / AT 失效）▼类似以下报警▼<br>————————————<br>FairPlay error<br>————————————<br>Invalid CKC error<br>————————————<br>Persistent Key Error<br>————————————<br>等等..."]
+    %% 失败判定中心
+    D -->|"❌ 捕获异常 (Catch Exception)"| ErrorHandler{{"分析错误类型"}}
 
-    F --> G["自动刷新 AT<br>网络不稳等可能同时触发<br>KDCanProcessCKC 报警"]
+    %% 分支 1: 软故障 (可恢复)
+    ErrorHandler -->|"类似状态码: -42812 等<br>Persistent Key Error"| SoftError["⚠️ 事务性错误 (Soft Fault)<br>网络波动 或:<br>Key Server 拒绝"]
+    SoftError -->|"动作: 丢弃当前 Key"| RefreshAT["刷新 AT / 重新请求"]
+    RefreshAT --> D
 
-    G --> H["使用新 AT 重新调用<br>KDProcessPersistentKeyWithAT<br>生成新的 Persistent Key"]
+    %% 分支 2: 硬故障 (会话冲突/致死)
+    ErrorHandler -->|"类似状态码: -42829 等<br>FairPlay error / Context Invalid"| HardError["⛔ 会话冲突/上下文损坏 (Hard Fault)<br>并发导致 DeviceID 互踢<br>或者 Session 句柄泄露"]
+    HardError -->|"动作: 熔断保护"| KillProcess["🔴 标记进程不健康<br>触发重启 / 重新登录"]
+    KillProcess --> Restart["重新初始化实例<br>(生成新 DeviceID / Session)"]
+    Restart -.->|"恢复后"| C
 
-    H --> NormalPlay
+    %% 分支 3: 风控/限制
+    ErrorHandler -->|"关键词: Invalid CKC <br>高负载保护"| RateLimit["⏳ 频率限制 (Rate Limit)<br>请求过快 / 服务器风控"]
+    RateLimit -->|"动作: 强制冷却"| CoolDown["🧊 Sleep (休眠) 3-10秒<br>等待服务器重置计数"]
+    CoolDown --> RefreshAT
 
-    style A fill:#2c2c2c,stroke:#007AFF,color:#fff
+    %% 样式定义
+    style A fill:#2c2c2c,stroke:#fff,color:#fff
     style B fill:#1c1c1e,stroke:#007AFF,color:#fff
     style C fill:#1c1c1e,stroke:#007AFF,color:#fff
     style D fill:#1c1c1e,stroke:#007AFF,color:#fff
     style NormalPlay fill:#007AFF,stroke:#007AFF,color:#fff
-    style F fill:#8B0000,stroke:#FF3B30,color:#fff
-    style G fill:#1c1c1e,stroke:#FF3B30,color:#fff
-    style H fill:#1c1c1e,stroke:#FF9F0A,color:#fff
+    
+    style ErrorHandler fill:#FF9F0A,stroke:#fff,color:#000
+    
+    style SoftError fill:#3a3a3c,stroke:#FF9F0A,color:#fff
+    style HardError fill:#3a3a3c,stroke:#FF3B30,color:#fff
+    style RateLimit fill:#3a3a3c,stroke:#30D158,color:#fff
+    
+    style KillProcess fill:#8B0000,stroke:#FF3B30,color:#fff
+    style CoolDown fill:#004d00,stroke:#30D158,color:#fff
