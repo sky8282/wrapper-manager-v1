@@ -506,6 +506,7 @@ func setupInstance(id string, region string, wrapperPath string) (string, string
 				rName := rEntry.Name()
 				rSrcPath := filepath.Join(srcPath, rName)
 				rDstPath := filepath.Join(dstPath, rName)
+				
 				if rName == "dev" {
 					if err := os.MkdirAll(rDstPath, 0755); err != nil {
 					}
@@ -1418,16 +1419,17 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
 		return
 	}
 	defer backendConn.Close()
-
 	if tcpConn, ok := clientConn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 		tcpConn.SetReadBuffer(4 * 1024 * 1024)
 		tcpConn.SetWriteBuffer(4 * 1024 * 1024)
 	}
 	if tcpConn, ok := backendConn.(*net.TCPConn); ok {
 		tcpConn.SetNoDelay(true)
 		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 		tcpConn.SetReadBuffer(4 * 1024 * 1024)
 		tcpConn.SetWriteBuffer(4 * 1024 * 1024)
 	}
@@ -1482,35 +1484,34 @@ func selectBackendByIP(region string, clientAddr string, manager *Manager, proto
 		return candidates[i].ID < candidates[j].ID
 	})
 
-	//强制 2秒 冷却时间
 	const CoolDownDuration = 2 * time.Second
 	now := time.Now()
 	var bestCandidate *ManagedProcess
-
+	
 	startIdx := int(atomic.LoadUint64(&globalRoundRobinCounter) % uint64(len(candidates)))
 	for i := 0; i < len(candidates); i++ {
 		idx := (startIdx + i) % len(candidates)
 		p := candidates[idx]
-
 		p.mutex.Lock()
 		timeSince := now.Sub(p.LastUseTime)
 		p.mutex.Unlock()
 
-		if timeSince >= CoolDownDuration {
+		if timeSince < CoolDownDuration {
+			continue
+		}
+
+		currentConns := atomic.LoadInt64(&p.ActiveConn)
+		if bestCandidate == nil || currentConns < atomic.LoadInt64(&bestCandidate.ActiveConn) {
 			bestCandidate = p
-			atomic.AddUint64(&globalRoundRobinCounter, 1)
-			break
 		}
 	}
 
 	if bestCandidate == nil {
-		var maxIdleDuration time.Duration = -1
+		minConns := int64(1<<63 - 1)
 		for _, p := range candidates {
-			p.mutex.Lock()
-			idle := now.Sub(p.LastUseTime)
-			p.mutex.Unlock()
-			if idle > maxIdleDuration {
-				maxIdleDuration = idle
+			currentConns := atomic.LoadInt64(&p.ActiveConn)
+			if currentConns < minConns {
+				minConns = currentConns
 				bestCandidate = p
 			}
 		}
@@ -1520,6 +1521,7 @@ func selectBackendByIP(region string, clientAddr string, manager *Manager, proto
 		bestCandidate.mutex.Lock()
 		bestCandidate.LastUseTime = time.Now()
 		bestCandidate.mutex.Unlock()
+		atomic.AddUint64(&globalRoundRobinCounter, 1)
 	}
 
 	return bestCandidate
@@ -1532,7 +1534,7 @@ func startRegionalTcpProxy(region string, addr string, manager *Manager, ready c
 		close(ready)
 		return
 	}
-	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s (IP Hash + 2s 冷却时间)", strings.ToUpper(region), addr)
+	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s ( 2秒 冷却时间 + 最小连接数 )", strings.ToUpper(region), addr)
 	close(ready)
 
 	for {
@@ -1669,7 +1671,7 @@ func startRegionalHttpProxy(region string, addr string, manager *Manager, ready 
 	httpServer := &http.Server{Handler: proxy}
 	go httpServer.Serve(httpListener)
 
-	log.Printf("[HTTP-%s] 双模负载均衡已启动 -> %s (HTTP + Raw兼容模式)", strings.ToUpper(region), addr)
+	log.Printf("[HTTP-%s] 双模负载均衡已启动 -> %s ( HTTP + Raw兼容模式 )", strings.ToUpper(region), addr)
 	close(ready)
 
 	for {
