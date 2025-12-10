@@ -147,7 +147,8 @@ type ManagedProcess struct {
 	logBuffer       []string
 	restartCounter  int
 	RetryCount      int
-	ActiveConn      int64 `json:"activeConn"`
+	ActiveConn      int64     `json:"activeConn"`
+	LastUseTime     time.Time `json:"-"`
 }
 
 type WriteCounter struct {
@@ -462,7 +463,7 @@ func copyDir(src, dst string) error {
 	})
 }
 
-func setupInstance(region string, wrapperPath string) (string, string, error) {
+func setupInstance(id string, region string, wrapperPath string) (string, string, error) {
 	absWrapperBin, err := filepath.Abs(wrapperPath)
 	if err != nil {
 		return "", "", err
@@ -470,7 +471,9 @@ func setupInstance(region string, wrapperPath string) (string, string, error) {
 	srcDir := filepath.Dir(absWrapperBin)
 	binName := filepath.Base(absWrapperBin)
 	instanceRoot := filepath.Join(srcDir, "instances")
-	instanceDir := filepath.Join(instanceRoot, region)
+
+	instanceDir := filepath.Join(instanceRoot, fmt.Sprintf("%s_%s", region, id))
+
 	if _, err := os.Stat(instanceDir); err == nil {
 		return instanceDir, "./" + binName, nil
 	}
@@ -481,13 +484,16 @@ func setupInstance(region string, wrapperPath string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "instances" || name == "manager.json" || name == "nohup.out" || strings.HasSuffix(name, ".log") {
 			continue
 		}
+		
 		srcPath := filepath.Join(srcDir, name)
 		dstPath := filepath.Join(instanceDir, name)
+		
 		if name == "rootfs" {
 			if err := os.MkdirAll(dstPath, 0755); err != nil {
 				return "", "", err
@@ -500,11 +506,12 @@ func setupInstance(region string, wrapperPath string) (string, string, error) {
 				rName := rEntry.Name()
 				rSrcPath := filepath.Join(srcPath, rName)
 				rDstPath := filepath.Join(dstPath, rName)
-				if rName == "dev" || rName == "proc" || rName == "sys" {
+				if rName == "dev" {
 					if err := os.MkdirAll(rDstPath, 0755); err != nil {
 					}
 					continue
 				}
+
 				if rName == "data" {
 					if _, err := os.Stat(rDstPath); os.IsNotExist(err) {
 						if err := copyDir(rSrcPath, rDstPath); err != nil {
@@ -542,7 +549,7 @@ func (p *ManagedProcess) runLoop() {
 		p.logToBuffer(fmt.Sprintf("\033[33m--- 监控重启关键词: %v ---\033[0m", p.RestartPatterns))
 	}
 
-	instanceDir, binCommand, err := setupInstance(p.Region, p.WrapperPath)
+	instanceDir, binCommand, err := setupInstance(p.ID, p.Region, p.WrapperPath)
 	if err != nil {
 		p.logToBuffer(fmt.Sprintf("\033[31m!!! 实例环境创建失败: %v\033[0m", err))
 		p.setState(StateFailed)
@@ -964,13 +971,6 @@ func (m *Manager) RemoveProcess(id string) error {
 	p.mutex.Unlock()
 	delete(m.Processes, id)
 	m.saveConfig_internal()
-	hasSiblings := false
-	for _, otherP := range m.Processes {
-		if otherP.Region == targetRegion {
-			hasSiblings = true
-			break
-		}
-	}
 	m.mutex.Unlock()
 	p.Stop()
 	globalHub.BroadcastProcessRemoved(id)
@@ -982,13 +982,9 @@ func (m *Manager) RemoveProcess(id string) error {
 
 	absWrapperBin, _ := filepath.Abs(m.WrapperPath)
 	srcDir := filepath.Dir(absWrapperBin)
-	instanceDir := filepath.Join(srcDir, "instances", targetRegion)
-	if !hasSiblings {
-		log.Printf("区域 [%s] 已无运行实例，清理目录: %s", targetRegion, instanceDir)
-		os.RemoveAll(instanceDir)
-	} else {
-		log.Printf("区域 [%s] 仍有实例运行，保留目录: %s", targetRegion, instanceDir)
-	}
+	instanceDir := filepath.Join(srcDir, "instances", fmt.Sprintf("%s_%s", targetRegion, id))
+	log.Printf("移除进程实例，清理目录: %s", instanceDir)
+	os.RemoveAll(instanceDir)
 	return nil
 }
 
@@ -1486,11 +1482,47 @@ func selectBackendByIP(region string, clientAddr string, manager *Manager, proto
 		return candidates[i].ID < candidates[j].ID
 	})
 
-	current := atomic.AddUint64(&globalRoundRobinCounter, 1)
-	index := int(current % uint64(len(candidates)))
-	selected := candidates[index]
+	//强制 2秒 冷却时间
+	const CoolDownDuration = 2 * time.Second
+	now := time.Now()
+	var bestCandidate *ManagedProcess
 
-	return selected
+	startIdx := int(atomic.LoadUint64(&globalRoundRobinCounter) % uint64(len(candidates)))
+	for i := 0; i < len(candidates); i++ {
+		idx := (startIdx + i) % len(candidates)
+		p := candidates[idx]
+
+		p.mutex.Lock()
+		timeSince := now.Sub(p.LastUseTime)
+		p.mutex.Unlock()
+
+		if timeSince >= CoolDownDuration {
+			bestCandidate = p
+			atomic.AddUint64(&globalRoundRobinCounter, 1)
+			break
+		}
+	}
+
+	if bestCandidate == nil {
+		var maxIdleDuration time.Duration = -1
+		for _, p := range candidates {
+			p.mutex.Lock()
+			idle := now.Sub(p.LastUseTime)
+			p.mutex.Unlock()
+			if idle > maxIdleDuration {
+				maxIdleDuration = idle
+				bestCandidate = p
+			}
+		}
+	}
+
+	if bestCandidate != nil {
+		bestCandidate.mutex.Lock()
+		bestCandidate.LastUseTime = time.Now()
+		bestCandidate.mutex.Unlock()
+	}
+
+	return bestCandidate
 }
 
 func startRegionalTcpProxy(region string, addr string, manager *Manager, ready chan struct{}) {
@@ -1500,7 +1532,7 @@ func startRegionalTcpProxy(region string, addr string, manager *Manager, ready c
 		close(ready)
 		return
 	}
-	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s (策略: IP Hash)", strings.ToUpper(region), addr)
+	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s (IP Hash + 2s 冷却时间)", strings.ToUpper(region), addr)
 	close(ready)
 
 	for {
