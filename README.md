@@ -22,14 +22,16 @@
 
 ## 🚀 部署与使用指南
 ### 目录结构如下：
+### ✨ wrapper 目录结构如下：
 ```text
 /root/wrapper/
 ├── main.go           # 源码 (或者编译好的 wrapper-manager)
 ├── config.yaml       # wrapper-manager 配置文件
-├── manager.json      # 进程配置文件，添加进程会自动生成
+├── manager.json      # 进程配置文件 (添加进程会自动生成)
 ├── index.html        # 前端界面
 ├── wrapper           # wrapper 二进制程序
-└── rootfs            # wrapper 相关的文件夹
+├── rootfs            # wrapper 相关的文件夹
+└── instances         # 实例环境文件夹 (添加进程会自动生成)
 ```
 ### 初始化 Go 模块：
 ```text
