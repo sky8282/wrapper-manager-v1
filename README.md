@@ -5,12 +5,12 @@
 一个基于 Web 的轻量级进程管理工具，专为管理 `wrapper` 二进制程序设计。它提供了一个可视化的仪表盘，支持多进程并发管理、日志实时查看、健康检查以及断线自动重启。
 ## ✨ 功能特性
 * **Web 可视化界面**：直观的卡片式布局，实时监控所有进程状态。
-* **多进程管理**：支持添加、停止、重启多账号多端口的 `wrapper` 进程。
+* **多进程管理**：支持添加、重启、移除 多账号多端口的 `wrapper` 进程。
 * **实时日志**：通过 WebSocket 实时推送进程输出日志（支持 PTY 伪终端）。
 * **健康检查**：自动检测指定端口连通性，异常时自动标记状态并重启。
 * **监控关键字**：监控到日志出现关键字，如：`KDCanProcessCKC` 将重启进程，可自行添加多个其他关键字。
 * **自动重启**：进程意外退出或崩溃时自动尝试重启。
-* **配置持久化**：自动保存进程列表，重启管理器后自动启动列表里的进程。
+* **配置持久化**：自动保存进程列表（ manager.json ），重启管理器后自动启动列表里的进程。
 * **wrapper项目**：https://github.com/zhaarey/wrapper  或 https://github.com/WorldObservationLog/wrapper
 * **apple-music-downloader 原版**：https://github.com/zhaarey/apple-music-downloader
 * **apple-music-downloader 多线程多区域版本分支**：https://github.com/sky8282/apple-music-downloader
@@ -65,7 +65,7 @@ apt install -y iproute2
 * 输入完整的启动命令，如：`-H 127.0.0.1 -D 10020 -M 10021` 或 `-H 127.0.0.1 -D 10020 -M 10021 -L 邮箱:密码，或 其他启动参数`。
 * 在日志里查看并发送 `2fa` 验证码。
 * 注意：命令中必须包含 -D <端口> 参数，管理器将使用该端口作为进程的唯一 ID 进行识别和健康检查。
-* 仅个人理解的解密流程：
+### 仅个人理解的解密流程：
 ```mermaid
 flowchart TD
     %% 核心流程
