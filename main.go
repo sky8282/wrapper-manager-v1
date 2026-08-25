@@ -126,6 +126,8 @@ type ProxyUpdate struct {
 type ManagedProcess struct {
 	ID              string       `json:"id"`
 	M3U8Port        string       `json:"m3u8Port"`
+	AccountPort     string       `json:"accountPort"`
+	KeyPort         string       `json:"keyPort"`
 	Region          string       `json:"region"`
 	Command         string       `json:"command"`
 	Args            []string     `json:"args"`
@@ -191,8 +193,10 @@ type WrapperConfig struct {
 }
 
 type RegionConfig struct {
-	DecryptPort string `yaml:"decrypt-m3u8-port"`
-	GetPort     string `yaml:"get-m3u8-port"`
+	DecryptPort    string `yaml:"decrypt-m3u8-port"`
+	GetPort        string `yaml:"get-m3u8-port"`
+	GetAccountPort string `yaml:"get-account-port"`
+	KeyServer      string `yaml:"key-server"`
 }
 
 type Manager struct {
@@ -281,6 +285,8 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 		region = "cn"
 	}
 	mPort := getPortFromArgs(args, "-M")
+	aPort := getPortFromArgs(args, "-A")
+	kPort := getPortFromArgs(args, "-K")
 
 	if len(patterns) == 0 {
 		patterns = make([]string, len(GlobalRestartPatterns))
@@ -290,6 +296,8 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 	return &ManagedProcess{
 		ID:              id,
 		M3U8Port:        mPort,
+		AccountPort:     aPort,
+		KeyPort:         kPort,
 		Region:          region,
 		Command:         command,
 		Args:            args,
@@ -1369,6 +1377,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		switch msg.Type {
+		case "stop_process":
+			log.Printf("收到 'stop' 命令, ID: %s", msg.ID)
+			p := globalManager.GetProcess(msg.ID)
+			if p != nil {
+				p.Stop()
+			}
 		case "start_process":
 			port := getPortFromArgs(msg.Args, "-D")
 			if port == "" {
@@ -1409,11 +1423,23 @@ func handleSignals(m *Manager) {
 	}
 }
 
-func handleTcpProxy(clientConn net.Conn, p *ManagedProcess) {
+func handleTcpProxy(clientConn net.Conn, p *ManagedProcess, portType string) {
 	defer clientConn.Close()
 	defer atomic.AddInt64(&p.ActiveConn, -1)
 
-	backendAddr := "127.0.0.1:" + p.ID
+	var targetPort string
+	switch portType {
+	case "decrypt":
+		targetPort = p.ID
+	case "account":
+		targetPort = p.AccountPort
+	case "key":
+		targetPort = p.KeyPort
+	default:
+		targetPort = p.ID
+	}
+
+	backendAddr := "127.0.0.1:" + targetPort
 	backendConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
 	if err != nil {
 		return
@@ -1527,14 +1553,14 @@ func selectBackendByIP(region string, clientAddr string, manager *Manager, proto
 	return bestCandidate
 }
 
-func startRegionalTcpProxy(region string, addr string, manager *Manager, ready chan struct{}) {
+func startRegionalTcpProxy(region string, addr string, portType string, manager *Manager, ready chan struct{}) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Printf("[TCP-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
 		return
 	}
-	log.Printf("[TCP-%s] 解密负载均衡已启动 -> %s ( 2秒 冷却时间 + 最小连接数 )", strings.ToUpper(region), addr)
+	log.Printf("[TCP-%s] [%s] 负载均衡已启动 -> %s", strings.ToUpper(region), portType, addr)
 	close(ready)
 
 	for {
@@ -1547,7 +1573,7 @@ func startRegionalTcpProxy(region string, addr string, manager *Manager, ready c
 
 		if bestTarget != nil {
 			atomic.AddInt64(&bestTarget.ActiveConn, 1)
-			go handleTcpProxy(c, bestTarget)
+			go handleTcpProxy(c, bestTarget, portType)
 		} else {
 			c.Close()
 		}
@@ -1671,7 +1697,7 @@ func startRegionalHttpProxy(region string, addr string, manager *Manager, ready 
 	httpServer := &http.Server{Handler: proxy}
 	go httpServer.Serve(httpListener)
 
-	log.Printf("[HTTP-%s] 双模负载均衡已启动 -> %s ( HTTP + Raw兼容模式 )", strings.ToUpper(region), addr)
+	log.Printf("[HTTP-%s] [m3u8] 负载均衡已启动 -> %s", strings.ToUpper(region), addr)
 	close(ready)
 
 	for {
@@ -1772,12 +1798,22 @@ func main() {
 		if err := node.Decode(&rCfg); err == nil {
 			if rCfg.DecryptPort != "" {
 				ready := make(chan struct{})
-				go startRegionalTcpProxy(regionName, rCfg.DecryptPort, globalManager, ready)
+				go startRegionalTcpProxy(regionName, rCfg.DecryptPort, "decrypt", globalManager, ready)
 				<-ready
 			}
 			if rCfg.GetPort != "" {
 				ready := make(chan struct{})
 				go startRegionalHttpProxy(regionName, rCfg.GetPort, globalManager, ready)
+				<-ready
+			}
+			if rCfg.GetAccountPort != "" {
+				ready := make(chan struct{})
+				go startRegionalTcpProxy(regionName, rCfg.GetAccountPort, "account", globalManager, ready)
+				<-ready
+			}
+			if rCfg.KeyServer != "" {
+				ready := make(chan struct{})
+				go startRegionalTcpProxy(regionName, rCfg.KeyServer, "key", globalManager, ready)
 				<-ready
 			}
 			fmt.Println()
