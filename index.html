@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 
-<html lang="zh-CN" class="light-mode"> <head> <meta charset="UTF-8"> <title>Wrapper 管理器</title> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" /> <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script> <style> :root { --bg-color: #f4f6f8; --card-bg: #ffffff; --text-main: #2c3e50; --text-sub: #7f8c8d; --border-color: #ecf0f1; --primary: #3498db; --success: #2ecc71; --warning: #f1c40f; --danger: #e74c3c; --code-bg: #f8f9fa; --hover-yellow: #f1c40f; --btn-text-color: #000000; --btn-start-bg: rgba(46, 204, 113, 0.4); --btn-restart-bg: rgba(241, 196, 15, 0.4); --btn-remove-bg: rgba(231, 76, 60, 0.2); --log-bg: #f8f9fa; --log-fg: #2c3e50; }
+<html lang="zh-CN" class="light-mode"> <head> <meta charset="UTF-8"> <title>Wrapper 管理器v1</title> <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" /> <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script> <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script> <style> :root { --bg-color: #f4f6f8; --card-bg: #ffffff; --text-main: #2c3e50; --text-sub: #7f8c8d; --border-color: #ecf0f1; --primary: #3498db; --success: #2ecc71; --warning: #f1c40f; --danger: #e74c3c; --code-bg: #f8f9fa; --hover-yellow: #f1c40f; --btn-text-color: #000000; --btn-start-bg: rgba(46, 204, 113, 0.4); --btn-restart-bg: rgba(241, 196, 15, 0.4); --btn-remove-bg: rgba(231, 76, 60, 0.2); --log-bg: #f8f9fa; --log-fg: #2c3e50; }
 
     @media (prefers-color-scheme: dark) {
         :root {
@@ -185,7 +185,8 @@
     .btn-log { background-color: #74b9ff; color: #fff; border: none !important; }
     .btn-log:hover { background-color: var(--hover-yellow) !important; color: #000 !important; border-color: var(--hover-yellow) !important; }
     .btn-restart { background-color: var(--btn-restart-bg); }
-    .btn-start { background-color: var(--btn-start-bg); }
+    .btn-toggle-start { background-color: var(--btn-start-bg); }
+    .btn-toggle-stop { background-color: #e74c3c !important; color: #000000 !important; } /* 红底黑字 */
     .btn-remove { background-color: var(--btn-remove-bg); }
     .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); backdrop-filter: blur(2px); }
     .modal-content { background-color: var(--card-bg); margin: 8% auto; padding: 30px; border-radius: 16px; width: 90%; max-width: 800px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 1px solid var(--border-color); }
@@ -292,7 +293,7 @@
 <div class="container">
     
     <div class="header-content">
-        <h1>Wrapper 管理器</h1>
+        <h1>Wrapper 管理器v1</h1>
         <div class="header-controls">
             
             <input type="text" id="regionFilter" class="filter-input" placeholder="筛选区域如:cn">
@@ -315,7 +316,7 @@
                 </div>
             </div>
 
-            <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器" class="control-button">
+            <a href="https://github.com/sky8282/wrapper-manager-v1" target="_blank" title="wrapper 管理器v1" class="control-button">
                 <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
             </a>
 
@@ -355,8 +356,8 @@
             </select>
         </div>
 
-        <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H 指定解密ip<br>-D 指定解密端口<br>-M 指定m3u8端口<br>-L 登录账号<br>-P 指定代理<br><br></span>
-        <input type="text" id="addCommandInput" value="-H 127.0.0.1 -D 10020 -M 10021 -L 邮箱:密码 -P 代理">
+        <span class="modal-label">启动命令 (必须包含 -D 端口):<br>-H 解密 ip<br>-D 解密端口<br>-M m3u8 端口<br>-A 账号 json 格式信息端口<br>-K 下发密钥端口<br>-L 登录账号<br>-P 代理<br><br></span>
+        <input type="text" id="addCommandInput" value="-H 0.0.0.0 -D 10020 -M 10021 -A 10022 -K 10023 -L 邮箱:密码 -P 代理">
         
         <button id="addCommandButton">添加并启动</button>
     </div>
@@ -734,21 +735,29 @@
         
         existingCard.querySelector('.proc-speed').textContent = proc.netSpeed || 'N/A';
         
-        const startBtn = existingCard.querySelector('.btn-start');
+        const toggleBtn = existingCard.querySelector('.btn-toggle');
         const restartBtn = existingCard.querySelector('.btn-restart');              
         if (proc.state === "STOPPED" || proc.state === "FAILED") {
-            startBtn.style.display = 'inline-block';
             restartBtn.style.display = 'none';
+            if (toggleBtn) {
+                toggleBtn.textContent = '启动';
+                toggleBtn.className = 'btn-toggle btn-toggle-start';
+            }
         } else {
-            startBtn.style.display = 'none';
             restartBtn.style.display = 'inline-block';
+            if (toggleBtn) {
+                toggleBtn.textContent = '停止';
+                toggleBtn.className = 'btn-toggle btn-toggle-stop';
+            }
         }
     }
 
     function parsePortsObj(command) {
         const dPort = command.match(/-D\s+([^\s]+)/)?.[1] || "N/A";
         const mPort = command.match(/-M\s+([^\s]+)/)?.[1] || "N/A";
-        return { d: dPort, m: mPort };
+        const aPort = command.match(/-A\s+([^\s]+)/)?.[1] || "N/A";
+        const kPort = command.match(/-K\s+([^\s]+)/)?.[1] || "N/A";
+        return { d: dPort, m: mPort, a: aPort, k: kPort };
     }
 
     function parseDPort(args) {
@@ -822,8 +831,14 @@
                 <span><span class="label">账号区域:</span><strong style="color:${regionColor}; font-size:14px;">${proc.region || "cn"}</strong></span>
             </div>
 
-            <div class="card-row">
-                <span><span class="label">监听端口:</span><span class="value">${ports.d} / ${ports.m}</span></span>
+            <div class="card-row" style="align-items: flex-start;">
+                <span style="display: flex;">
+                    <span class="label" style="margin-top: 2px;">监听端口:</span>
+                    <span class="value" style="display: flex; flex-direction: column; line-height: 1.5;">
+                        <span>-D ${ports.d} / -M ${ports.m}</span>
+                        <span>-A ${ports.a} / -K ${ports.k}</span>
+                    </span>
+                </span>
             </div>
 
             <div class="card-row">
@@ -841,8 +856,8 @@
 
             <div class="process-buttons">
                 <button class="btn-log" data-id="${proc.id}">日志</button>
-                <button class="btn-start" data-id="${proc.id}" style="display: ${isStopped ? 'inline-block' : 'none'};">启动</button>
                 <button class="btn-restart" data-id="${proc.id}" style="display: ${isStopped ? 'none' : 'inline-block'};">重启</button>
+                <button class="btn-toggle ${isStopped ? 'btn-toggle-start' : 'btn-toggle-stop'}" data-id="${proc.id}">${isStopped ? '启动' : '停止'}</button>
                 <button class="btn-remove" data-id="${proc.id}">移除</button>
             </div>
         `;
@@ -911,7 +926,16 @@
             ws.send(JSON.stringify({ type: "get_logs", id: id }));
         }
         
-        if (target.classList.contains('btn-start') || target.classList.contains('btn-restart')) {
+        if (target.classList.contains('btn-toggle')) {
+            const card = document.getElementById('card-' + id);
+            if (target.classList.contains('btn-toggle-start')) {
+                triggerStartOrRestart(card, id);
+            } else if (target.classList.contains('btn-toggle-stop')) {
+                ws.send(JSON.stringify({ type: "stop_process", id: id }));
+            }
+        }
+        
+        if (target.classList.contains('btn-restart')) {
             const card = document.getElementById('card-' + id);
             triggerStartOrRestart(card, id);
         }
@@ -1038,8 +1062,8 @@
                 if (btn && btn.style.display !== 'none') {
                     triggerStartOrRestart(card, id);
                 } else {
-                    btn = card.querySelector('.btn-start');
-                    if (btn && btn.style.display !== 'none') {
+                    btn = card.querySelector('.btn-toggle-start');
+                    if (btn) {
                         triggerStartOrRestart(card, id);
                     }
                 }
