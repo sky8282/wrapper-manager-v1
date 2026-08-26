@@ -370,7 +370,7 @@ func (p *ManagedProcess) setState(newState ProcessState) {
 
 	oldState := p.State
 	p.State = newState
-	log.Printf("进程 [%s] 状态变为: %s", p.ID, p.State)
+	log.Printf("进程 [%s] 状态: %s", p.ID, p.State)
 
 	if newState == StateStopped {
 		p.PID = 0
@@ -412,10 +412,12 @@ func (p *ManagedProcess) setState(newState ProcessState) {
 }
 
 func (p *ManagedProcess) logToBuffer(line string) {
+	p.mutex.Lock()
 	p.logBuffer = append(p.logBuffer, line)
 	if len(p.logBuffer) > MaxLogLines {
 		p.logBuffer = p.logBuffer[len(p.logBuffer)-MaxLogLines:]
 	}
+	p.mutex.Unlock()
 	globalHub.BroadcastLog(p.ID, line)
 }
 
@@ -598,7 +600,7 @@ func (p *ManagedProcess) runLoop() {
 
 		checkPort := p.getCheckPort()
 		if checkPort == "" {
-			p.logToBuffer("\033[33m!!! 提示: 无法从参数中找到 -D 端口，健康检查已禁用\033[0m")
+			p.logToBuffer("\033[33m!!! 提示: 无法从参数中找到 -K 端口，健康检查已禁用\033[0m")
 			p.setState(StateRunning)
 		} else {
 			go p.healthCheck(healthCtx, checkPort)
@@ -733,7 +735,7 @@ func (p *ManagedProcess) runLoop() {
 }
 
 func (p *ManagedProcess) getCheckPort() string {
-	return p.ID
+	return p.KeyPort
 }
 
 func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
@@ -772,8 +774,8 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 	}
 
 	const checkInterval = 5 * time.Second
-	const toleranceDuration = 20 * time.Minute
-	const maxRetries = int(toleranceDuration / checkInterval)
+    const toleranceDuration = 1 * time.Minute
+    const maxRetries = int(toleranceDuration / checkInterval)
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -796,7 +798,7 @@ func (p *ManagedProcess) healthCheck(ctx context.Context, port string) {
 					failCount++
 
 					if failCount >= maxRetries {
-						p.logToBuffer(fmt.Sprintf("\033[31m!!! 健康检查失败: 连续 %d 次无法连接 (已等待 20 分钟)，判定进程彻底失去响应，执行重启。\033[0m", failCount))
+						p.logToBuffer(fmt.Sprintf("\033[31m!!! 健康检查失败: 连续 %d 次无法连接 (已等待 1 分钟)，判定进程彻底失去响应，执行重启。\033[0m", failCount))
 						p.forceKill()
 						p.setState(StateFailed)
 						return
@@ -1384,9 +1386,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				p.Stop()
 			}
 		case "start_process":
-			port := getPortFromArgs(msg.Args, "-D")
+			port := getPortFromArgs(msg.Args, "-K")
 			if port == "" {
-				globalHub.SendJSON(conn, WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -D <port>"})
+				globalHub.SendJSON(conn, WSMessage{Type: "log_line", ID: "system", Data: "错误：启动命令中必须包含 -K <port>"})
 				continue
 			}
 			region := msg.Region
@@ -1406,7 +1408,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "get_logs":
 			p := globalManager.GetProcess(msg.ID)
 			if p != nil {
-				globalHub.SendJSON(conn, WSMessage{Type: "full_log", ID: p.ID, Payload: p.logBuffer})
+				p.mutex.Lock()
+				logsCopy := make([]string, len(p.logBuffer))
+				copy(logsCopy, p.logBuffer)
+				p.mutex.Unlock()
+				globalHub.SendJSON(conn, WSMessage{Type: "full_log", ID: p.ID, Payload: logsCopy})
 			}
 		}
 	}
@@ -1782,11 +1788,23 @@ func main() {
 	globalHub = newHub()
 	globalManager = NewManager(wrapperCfg.Path, wrapperCfg.StateFile)
 
+	fmt.Println() 
+
+	var procIDs []string
 	globalManager.mutex.RLock()
-	for _, p := range globalManager.Processes {
-		p.Start()
+	for id := range globalManager.Processes {
+		procIDs = append(procIDs, id)
 	}
 	globalManager.mutex.RUnlock()
+
+	sort.Strings(procIDs)
+	for _, id := range procIDs {
+		globalManager.GetProcess(id).Start()
+		time.Sleep(20 * time.Millisecond)
+	}
+	
+	time.Sleep(200 * time.Millisecond)
+	fmt.Println()
 
 	go globalHub.run()
 	go monitorSystem()
@@ -1839,6 +1857,7 @@ func main() {
 	}()
 
 	log.Printf("WebUI: http://%s", serverCfg.WebListen)
+	fmt.Println()
 	if err := http.ListenAndServe(serverCfg.WebListen, nil); err != nil {
 		log.Fatal(err)
 	}
