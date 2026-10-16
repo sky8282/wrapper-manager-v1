@@ -760,15 +760,15 @@
         return { d: dPort, m: mPort, a: aPort, k: kPort };
     }
 
-    function parseDPort(args) {
+    function parseKPort(args) {
          for (let i = 0; i < args.length; i++) {
-            if (args[i] === '-D' && i + 1 < args.length) {
+            if (args[i] === '-K' && i + 1 < args.length) {
                 const parts = args[i+1].split(':');
                 return parts[parts.length - 1];
             }
         }
         for (const arg of args) {
-            if (arg.startsWith("-D") && arg.length > 2) {
+            if (arg.startsWith("-K") && arg.length > 2) {
                  const parts = arg.substring(2).split(':');
                  return parts[parts.length - 1];
             }
@@ -951,10 +951,10 @@
         const commandText = card.querySelector('.process-command-edit').value;
         const region = card.dataset.region;
         const args = splitCommand(commandText);
-        const newId = parseDPort(args);
+        const newId = parseKPort(args);
         
         if (!newId) {
-            alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+            alert("启动命令中必须包含 -K  (例如 -K 10023)");
             return;
         }
         
@@ -970,10 +970,10 @@
         const commandText = addCommandInput.value;
         const regionVal = addRegionInput.value.trim() || "cn";
         const args = splitCommand(commandText);
-        const id = parseDPort(args);
+        const id = parseKPort(args);
 
         if (!id) {
-            alert("启动命令中必须包含 -D <port> (例如 -D 10020)");
+            alert("启动命令中必须包含 -K  (例如 -K 10023)");
             return;
         }
 
