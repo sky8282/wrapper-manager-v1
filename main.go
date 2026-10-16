@@ -35,6 +35,7 @@ const MaxLogLines = 200
 
 var GlobalRestartPatterns []string
 var globalRoundRobinCounter uint64
+var globalM3U8Mutex sync.Mutex
 
 var bufferPool = sync.Pool{
 	New: func() interface{} {
@@ -125,6 +126,7 @@ type ProxyUpdate struct {
 
 type ManagedProcess struct {
 	ID              string       `json:"id"`
+	DecryptPort     string       `json:"decryptPort"`
 	M3U8Port        string       `json:"m3u8Port"`
 	AccountPort     string       `json:"accountPort"`
 	KeyPort         string       `json:"keyPort"`
@@ -193,10 +195,7 @@ type WrapperConfig struct {
 }
 
 type RegionConfig struct {
-	DecryptPort    string `yaml:"decrypt-m3u8-port"`
-	GetPort        string `yaml:"get-m3u8-port"`
-	GetAccountPort string `yaml:"get-account-port"`
-	KeyServer      string `yaml:"key-server"`
+	ListenPort string `yaml:"listen-port"`
 }
 
 type Manager struct {
@@ -284,6 +283,7 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 	if region == "" {
 		region = "cn"
 	}
+	dPort := getPortFromArgs(args, "-D")
 	mPort := getPortFromArgs(args, "-M")
 	aPort := getPortFromArgs(args, "-A")
 	kPort := getPortFromArgs(args, "-K")
@@ -295,6 +295,7 @@ func NewManagedProcess(id string, region string, wrapperPath string, command str
 
 	return &ManagedProcess{
 		ID:              id,
+		DecryptPort:     dPort,
 		M3U8Port:        mPort,
 		AccountPort:     aPort,
 		KeyPort:         kPort,
@@ -611,7 +612,6 @@ func (p *ManagedProcess) runLoop() {
 		func() {
 			scanner := bufio.NewReader(ptmx)
 			p.restartCounter = 0
-			var firstPatternTime time.Time
 
 			for {
 				line, err := scanner.ReadString('\n')
@@ -640,23 +640,11 @@ func (p *ManagedProcess) runLoop() {
 					}
 
 					if matched {
-						now := time.Now()
-						if p.restartCounter == 0 || now.Sub(firstPatternTime) > 60*time.Second {
-							p.restartCounter = 1
-							firstPatternTime = now
-						} else {
-							p.restartCounter++
-						}
-
-						if p.restartCounter >= 3 {
-							p.logToBuffer(fmt.Sprintf("\033[31m!!! [监控] 60秒内检测到3次异常，触发重启: %s\033[0m", strings.TrimSpace(l)))
-							p.mutex.Lock()
-							if p.cmd != nil && p.cmd.Process != nil {
-								p.cmd.Process.Kill()
-							}
-							p.mutex.Unlock()
-							p.restartCounter = 0
-						}
+						p.logToBuffer(l)
+						p.logToBuffer(fmt.Sprintf("\033[31m!!! [监控] 检测到异常关键词，触发重启: %s\033[0m", strings.TrimSpace(l)))
+						p.restartCounter = 0
+						p.forceKill()
+						break
 					}
 
 					if isWarning {
@@ -1139,7 +1127,7 @@ func formatProcessSpeed(bytes uint64) string {
 }
 
 func getPortTrafficMap() map[string]uint64 {
-	out, err := exec.Command("ss", "-ntH").Output()
+	out, err := exec.Command("ss", "-ntiH").Output()
 	if err != nil {
 		return nil
 	}
@@ -1147,24 +1135,26 @@ func getPortTrafficMap() map[string]uint64 {
 	lines := strings.Split(string(out), "\n")
 
 	var currentPort string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	for _, rawLine := range lines {
+		trimmed := strings.TrimSpace(rawLine)
 		if trimmed == "" {
 			continue
 		}
 
-		fields := strings.Fields(line)
-		if len(fields) >= 4 {
-			if strings.Contains(fields[3], ":") {
-				_, port, err := net.SplitHostPort(fields[3])
-				if err == nil {
-					currentPort = port
+		if !strings.HasPrefix(rawLine, " ") && !strings.HasPrefix(rawLine, "\t") {
+			fields := strings.Fields(rawLine)
+			if len(fields) >= 4 {
+				if strings.Contains(fields[3], ":") {
+					_, port, err := net.SplitHostPort(fields[3])
+					if err == nil {
+						currentPort = port
+					}
 				}
 			}
 		}
 
-		if idx := strings.Index(line, "bytes_acked:"); idx != -1 {
-			remaining := line[idx+len("bytes_acked:"):]
+		if idx := strings.Index(rawLine, "bytes_acked:"); idx != -1 {
+			remaining := rawLine[idx+len("bytes_acked:"):]
 			remaining = strings.TrimSpace(remaining)
 			parts := strings.Fields(remaining)
 			if len(parts) > 0 {
@@ -1203,7 +1193,7 @@ func monitorNetworkSpeed() {
 				var ssBytes uint64 = 0
 
 				if portStats != nil {
-					ssBytes = portStats[p.ID]
+					ssBytes = portStats[p.DecryptPort]
 				}
 
 				currBytes := proxyBytes
@@ -1436,13 +1426,13 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess, portType string) {
 	var targetPort string
 	switch portType {
 	case "decrypt":
-		targetPort = p.ID
+		targetPort = p.DecryptPort
 	case "account":
 		targetPort = p.AccountPort
 	case "key":
 		targetPort = p.KeyPort
 	default:
-		targetPort = p.ID
+		targetPort = p.DecryptPort
 	}
 
 	backendAddr := "127.0.0.1:" + targetPort
@@ -1498,91 +1488,72 @@ func handleTcpProxy(clientConn net.Conn, p *ManagedProcess, portType string) {
 	wg.Wait()
 }
 
-func selectBackendByIP(region string, clientAddr string, manager *Manager, protocol string) *ManagedProcess {
-	var candidates []*ManagedProcess
-	manager.mutex.RLock()
-	for _, p := range manager.Processes {
-		if strings.EqualFold(p.Region, region) && p.ID != "" && p.State == StateRunning {
-			candidates = append(candidates, p)
-		}
+func selectBackendByIP(region string, clientAddr string, manager *Manager, portType string) *ManagedProcess {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	var maxConcurrent int64
+	var cooldown time.Duration
+
+	switch portType {
+	case "decrypt", "m3u8", "account", "key":
+		maxConcurrent = 1                        // 每个进程1个任务串行
+		cooldown = 2000 * time.Millisecond       // 强制冷却：2秒 (可按需调整)
+	default:
+		maxConcurrent = 5
+		cooldown = 1000 * time.Millisecond
 	}
-	manager.mutex.RUnlock()
-
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].ID < candidates[j].ID
-	})
-
-	const CoolDownDuration = 2 * time.Second
-	now := time.Now()
-	var bestCandidate *ManagedProcess
-	
-	startIdx := int(atomic.LoadUint64(&globalRoundRobinCounter) % uint64(len(candidates)))
-	for i := 0; i < len(candidates); i++ {
-		idx := (startIdx + i) % len(candidates)
-		p := candidates[idx]
-		p.mutex.Lock()
-		timeSince := now.Sub(p.LastUseTime)
-		p.mutex.Unlock()
-
-		if timeSince < CoolDownDuration {
-			continue
-		}
-
-		currentConns := atomic.LoadInt64(&p.ActiveConn)
-		if bestCandidate == nil || currentConns < atomic.LoadInt64(&bestCandidate.ActiveConn) {
-			bestCandidate = p
-		}
-	}
-
-	if bestCandidate == nil {
-		minConns := int64(1<<63 - 1)
-		for _, p := range candidates {
-			currentConns := atomic.LoadInt64(&p.ActiveConn)
-			if currentConns < minConns {
-				minConns = currentConns
-				bestCandidate = p
-			}
-		}
-	}
-
-	if bestCandidate != nil {
-		bestCandidate.mutex.Lock()
-		bestCandidate.LastUseTime = time.Now()
-		bestCandidate.mutex.Unlock()
-		atomic.AddUint64(&globalRoundRobinCounter, 1)
-	}
-
-	return bestCandidate
-}
-
-func startRegionalTcpProxy(region string, addr string, portType string, manager *Manager, ready chan struct{}) {
-	l, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Printf("[TCP-%s] 启动失败: %v", strings.ToUpper(region), err)
-		close(ready)
-		return
-	}
-	log.Printf("[TCP-%s] [%s] 负载均衡已启动 -> %s", strings.ToUpper(region), portType, addr)
-	close(ready)
 
 	for {
-		c, err := l.Accept()
-		if err != nil {
-			continue
+		var candidates []*ManagedProcess
+		manager.mutex.RLock()
+		for _, p := range manager.Processes {
+			if strings.EqualFold(p.Region, region) && p.ID != "" && p.State == StateRunning {
+				candidates = append(candidates, p)
+			}
+		}
+		manager.mutex.RUnlock()
+
+		if len(candidates) == 0 {
+			return nil
 		}
 
-		bestTarget := selectBackendByIP(region, c.RemoteAddr().String(), manager, "TCP")
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].ID < candidates[j].ID
+		})
 
-		if bestTarget != nil {
-			atomic.AddInt64(&bestTarget.ActiveConn, 1)
-			go handleTcpProxy(c, bestTarget, portType)
-		} else {
-			c.Close()
+		now := time.Now()
+		var bestCandidate *ManagedProcess
+		
+		startIdx := int(atomic.LoadUint64(&globalRoundRobinCounter) % uint64(len(candidates)))
+		for i := 0; i < len(candidates); i++ {
+			idx := (startIdx + i) % len(candidates)
+			p := candidates[idx]
+			
+			p.mutex.Lock()
+			timeSince := now.Sub(p.LastUseTime)
+			p.mutex.Unlock()
+
+			currentConns := atomic.LoadInt64(&p.ActiveConn)
+			
+			if currentConns < maxConcurrent && timeSince >= cooldown {
+				if bestCandidate == nil || currentConns < atomic.LoadInt64(&bestCandidate.ActiveConn) {
+					bestCandidate = p
+				}
+			}
 		}
+
+		if bestCandidate != nil {
+			bestCandidate.mutex.Lock()
+			if cooldown > 0 {
+				bestCandidate.LastUseTime = time.Now()
+			}
+			bestCandidate.mutex.Unlock()
+			atomic.AddUint64(&globalRoundRobinCounter, 1)
+			return bestCandidate
+		}
+
+		<-ticker.C
 	}
 }
 
@@ -1590,15 +1561,29 @@ func handleRawM3U8(region string, clientConn net.Conn, manager *Manager) {
 	defer clientConn.Close()
 
 	clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	requestData, err := io.ReadAll(clientConn)
-	if err != nil && len(requestData) == 0 {
+	lenBuf := make([]byte, 1)
+	if _, err := io.ReadFull(clientConn, lenBuf); err != nil {
 		return
 	}
+	idLen := int(lenBuf[0])
+	requestData := make([]byte, 1+idLen)
+	requestData[0] = lenBuf[0]
+	if idLen > 0 {
+		if _, err := io.ReadFull(clientConn, requestData[1:]); err != nil {
+			return
+		}
+	}
 
-	target := selectBackendByIP(region, clientConn.RemoteAddr().String(), manager, "RAW")
+	globalM3U8Mutex.Lock()
+	defer globalM3U8Mutex.Unlock()
+
+	target := selectBackendByIP(region, clientConn.RemoteAddr().String(), manager, "m3u8")
 	if target == nil {
 		return
 	}
+	
+	atomic.AddInt64(&target.ActiveConn, 1)
+	defer atomic.AddInt64(&target.ActiveConn, -1)
 
 	backendAddr := "127.0.0.1:" + target.M3U8Port
 	backendConn, err := net.DialTimeout("tcp", backendAddr, 5*time.Second)
@@ -1613,7 +1598,8 @@ func handleRawM3U8(region string, clientConn net.Conn, manager *Manager) {
 	}
 
 	backendConn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	responseData, err := io.ReadAll(backendConn)
+	reader := bufio.NewReader(backendConn)
+	responseData, err := reader.ReadBytes('\n')
 	if err != nil && len(responseData) == 0 {
 		return
 	}
@@ -1632,10 +1618,13 @@ func handleRawM3U8(region string, clientConn net.Conn, manager *Manager) {
 	clientConn.Write(responseData)
 }
 
-func startRegionalHttpProxy(region string, addr string, manager *Manager, ready chan struct{}) {
+type contextKey string
+const targetPortKey contextKey = "target_port"
+
+func startRegionalProxy(region string, addr string, manager *Manager, ready chan struct{}) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Printf("[HTTP-%s] 启动失败: %v", strings.ToUpper(region), err)
+		log.Printf("[PROXY-%s] 启动失败: %v", strings.ToUpper(region), err)
 		close(ready)
 		return
 	}
@@ -1643,11 +1632,11 @@ func startRegionalHttpProxy(region string, addr string, manager *Manager, ready 
 	httpListener := NewVirtualListener(l.Addr())
 
 	director := func(req *http.Request) {
-		target := selectBackendByIP(region, req.RemoteAddr, manager, "HTTP")
-		if target == nil {
+		port, _ := req.Context().Value(targetPortKey).(string)
+		if port == "" {
 			return
 		}
-		targetStr := "127.0.0.1:" + target.M3U8Port
+		targetStr := "127.0.0.1:" + port
 		targetUrl, _ := url.Parse("http://" + targetStr)
 
 		originalHost := req.Host
@@ -1699,12 +1688,35 @@ func startRegionalHttpProxy(region string, addr string, manager *Manager, ready 
 	}
 
 	proxy := &httputil.ReverseProxy{Director: director, ModifyResponse: modifyResponse}
+	proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		target := selectBackendByIP(region, req.RemoteAddr, manager, "m3u8")
+		if target == nil {
+			http.Error(w, "No backend available", http.StatusServiceUnavailable)
+			return
+		}
+		
+		atomic.AddInt64(&target.ActiveConn, 1)
+		defer atomic.AddInt64(&target.ActiveConn, -1)
+		
+		req = req.WithContext(context.WithValue(req.Context(), targetPortKey, target.M3U8Port))
+		proxy.ServeHTTP(w, req)
+	})
 
-	httpServer := &http.Server{Handler: proxy}
+	httpServer := &http.Server{Handler: proxyHandler}
 	go httpServer.Serve(httpListener)
 
-	log.Printf("[HTTP-%s] [m3u8] 负载均衡已启动 -> %s", strings.ToUpper(region), addr)
+	log.Printf("[PROXY-%s] [聚合端口] 负载均衡已启动 -> %s", strings.ToUpper(region), addr)
 	close(ready)
+
+	routeToTcp := func(conn net.Conn, portType string) {
+		bestTarget := selectBackendByIP(region, conn.RemoteAddr().String(), manager, portType)
+		if bestTarget != nil {
+			atomic.AddInt64(&bestTarget.ActiveConn, 1)
+			handleTcpProxy(conn, bestTarget, portType)
+		} else {
+			conn.Close()
+		}
+	}
 
 	for {
 		clientConn, err := l.Accept()
@@ -1723,13 +1735,38 @@ func startRegionalHttpProxy(region string, addr string, manager *Manager, ready 
 				return
 			}
 
-			peekedConn := &PeekedConn{Conn: c, peeked: buf[:n]}
 			head := string(buf[:n])
 
-			if strings.HasPrefix(head, "GET") || strings.HasPrefix(head, "POS") || strings.HasPrefix(head, "HEA") || strings.HasPrefix(head, "CON") {
-				httpListener.conns <- peekedConn
-			} else {
-				handleRawM3U8(region, peekedConn, manager)
+			switch head {
+			case "DEC:":
+				routeToTcp(c, "decrypt")
+			case "ACC:":
+				routeToTcp(c, "account")
+			case "KEY:":
+				routeToTcp(c, "key")
+			case "M3U:":
+				mBuf := make([]byte, 4)
+				c.SetReadDeadline(time.Now().Add(3 * time.Second))
+				mN, mErr := c.Read(mBuf)
+				c.SetReadDeadline(time.Time{})
+				if mErr != nil && mErr != io.EOF {
+					c.Close()
+					return
+				}
+				mPeeked := &PeekedConn{Conn: c, peeked: mBuf[:mN]}
+				mHead := string(mBuf[:mN])
+				if strings.HasPrefix(mHead, "GET") || strings.HasPrefix(mHead, "POS") || strings.HasPrefix(mHead, "HEA") || strings.HasPrefix(mHead, "CON") {
+					httpListener.conns <- mPeeked
+				} else {
+					handleRawM3U8(region, mPeeked, manager)
+				}
+			default:
+				peekedConn := &PeekedConn{Conn: c, peeked: buf[:n]}
+				if strings.HasPrefix(head, "GET") || strings.HasPrefix(head, "POS") || strings.HasPrefix(head, "HEA") || strings.HasPrefix(head, "CON") {
+					httpListener.conns <- peekedConn
+				} else {
+					handleRawM3U8(region, peekedConn, manager)
+				}
 			}
 		}(clientConn)
 	}
@@ -1814,24 +1851,9 @@ func main() {
 	for regionName, node := range rawMap {
 		var rCfg RegionConfig
 		if err := node.Decode(&rCfg); err == nil {
-			if rCfg.DecryptPort != "" {
+			if rCfg.ListenPort != "" {
 				ready := make(chan struct{})
-				go startRegionalTcpProxy(regionName, rCfg.DecryptPort, "decrypt", globalManager, ready)
-				<-ready
-			}
-			if rCfg.GetPort != "" {
-				ready := make(chan struct{})
-				go startRegionalHttpProxy(regionName, rCfg.GetPort, globalManager, ready)
-				<-ready
-			}
-			if rCfg.GetAccountPort != "" {
-				ready := make(chan struct{})
-				go startRegionalTcpProxy(regionName, rCfg.GetAccountPort, "account", globalManager, ready)
-				<-ready
-			}
-			if rCfg.KeyServer != "" {
-				ready := make(chan struct{})
-				go startRegionalTcpProxy(regionName, rCfg.KeyServer, "key", globalManager, ready)
+				go startRegionalProxy(regionName, rCfg.ListenPort, globalManager, ready)
 				<-ready
 			}
 			fmt.Println()
